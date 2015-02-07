@@ -51,6 +51,7 @@ CONFIGURE_FILE(
   "${CMAKE_CURRENT_BINARY_DIR}/include/cv2cgConfig.h")
 INCLUDE_DIRECTORIES(
 	"${CMAKE_CURRENT_BINARY_DIR}/include"
+	"~/OpenCV/opencv-2.4.9/modules/nonfree/include"
 )
 ########### uninstall files ###############
 CONFIGURE_FILE(
