@@ -54,6 +54,7 @@
 #include <cmath>
 #include <math.h>
 #include <ctime>
+#include <iomanip>
 
 #include "/usr/include/fcntl.h"
 #include <termios.h>
@@ -207,6 +208,9 @@ struct MarkerSet {
 
 const char * finalmsg;
 std::string message;
+ostringstream os;
+stringstream ss;
+unsigned nn;
 
 struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 	double tagTextScale;
@@ -359,27 +363,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		//cout<<varname<<".up="<<cv::Mat(up).reshape(1)<<"';"<<std::endl;
 		//cout<<varname<<".uc="<<uc<<";"<<std::endl;
 
-		/*	Using uc.x, uc.y, the central coordinates, and up[0].x, up[0].y, one of the corner coordinates,
-		*	we now compute the rotation and also construct the message according to the format
-		*	Note: reconstruct me! This is the worst design (very unnecessarily large packet format)
-		*	@	start of message
-		*	00xx	4 digit code indicates total number of characters in message
-		*	i	identity prefix, followed by identity, which can be any number of digits (i.e. 3 (1 digit) vs. 12 (2 digits))
-		*	x	x coord prefix, reported with as many digits as the program cares to do
-		*	y	y coord prefix, ""
-		*	r	rotation prefix, ""
-		*	^	end of message
-		*	for example:
-		*	@0026i1x367.157y298.807r184.525^
-		*/
-
-		//This is where the tag ID byte for each tag goes.		
-		message = "i" + to_string(dd.id) ;
-
-		//THIS is where we put the CX, CY coords
-		message = message + "x" + to_string(uc.x) + "y" + to_string(float(480) - uc.y);		
-
-		//THIS is where we put the rotation!!!
+		//Using uc.x, uc.y, the central coordinates, and up[0].x, up[0].y, one of the corner coordinates, we now compute the rotation 
 		float myX = up[0].x - uc.x;
 		float myY = up[0].y - uc.y;
 		float myR = 0;
@@ -400,19 +384,50 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 
 		myR = myR * (180.00/M_PI);
 		myR = 360-myR;
-		message = message + "r" + to_string(myR);
+
+		/*	We construct the message according to the format
+		*	111111		6 bit header, pads out total message size to a round number of bytes
+		*	-----		5 bit ID (max 32 decmal)
+		*	----------	10 bit y position (max 1023 rounded to the nearest pixel in decimal)
+		*	----------	10 bit x position (max 1023 rounded to the nearest pixel in decimal)
+		*	---------	9 bit rotation (max 512 rounded to the nearest degree in decimal)
+		*/
+		
+		//Add the header
+		ss << hex << to_string(63); //(decimal 63 is hex 3F is binary 111111)	
+		bitset<6> b_header(atoi(ss.str().c_str()));
+		message = b_header.to_string();		
+		ss.str("");
+
+		//Add the id
+		ss << hex << to_string(dd.id);
+		bitset<5> b_id(atoi(ss.str().c_str()));
+		message = message + b_id.to_string();
+		ss.str("");		
+	
+		//Add the y position
+		ss << hex << to_string(uc.y);
+		bitset<10> b_y(atoi(ss.str().c_str()));
+		message = message + b_y.to_string();
+		ss.str("");		
+	
+		//Add the x position
+		ss << hex << to_string(uc.x);
+		bitset<10> b_x(atoi(ss.str().c_str()));
+		message = message + b_x.to_string();
+		ss.str("");		
+		
+		//Add the rotation
+		ss << hex << to_string(myR);
+		bitset<9> b_r(atoi(ss.str().c_str()));
+		message = message + b_r.to_string();
+		ss.str("");	
 
 		//THIS is where we concatenate and prepare message
 		finalmsg = message.c_str(); //we need to see what the final payload size is first
-		std::string msgheader = to_string(strlen(finalmsg));		
-		for (int k=0; k <= (4-int(msgheader.length())); k++) { //pad with zeroes
-			msgheader = "0" + msgheader;
-		}
 		
-		message = "@" + msgheader + message + "^"; //add a start and stop character
-		finalmsg = message.c_str();	//convert the whole command to const char * for the system function
-		(void)write(tty_fd, finalmsg, strlen(finalmsg));	 //This command pushes data to the wixel, if available		
-		cout << message << endl; //also put it to the command line for debug
+		//(void)write(tty_fd, finalmsg, strlen(finalmsg));	 //This command pushes data to the wixel, if available		
+    		cout << message << endl; //push to command line (in final version this ought to be human readable version, not binary version.)
 
 	}
 
