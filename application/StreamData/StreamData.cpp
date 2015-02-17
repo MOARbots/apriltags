@@ -387,7 +387,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 
 		/*	We construct the message according to the format
 		*	111111		6 bit header, pads out total message size to a round number of bytes
-		*	-----		5 bit ID (max 32 decmal)
+		*	-----		5 bit ID (max 32 decimal)
 		*	----------	10 bit y position (max 1023 rounded to the nearest pixel in decimal)
 		*	----------	10 bit x position (max 1023 rounded to the nearest pixel in decimal)
 		*	---------	9 bit rotation (max 512 rounded to the nearest degree in decimal)
@@ -427,7 +427,8 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		finalmsg = message.c_str(); //we need to see what the final payload size is first
 		
 		//(void)write(tty_fd, finalmsg, strlen(finalmsg));	 //This command pushes data to the wixel, if available		
-    		cout << message << endl; //push to command line (in final version this ought to be human readable version, not binary version.)
+    		//cout << message << endl; //push to command line (in final version this ought to be human readable version, not binary version.)
+		cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
 
 	}
 
