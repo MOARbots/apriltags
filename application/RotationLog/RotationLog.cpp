@@ -43,6 +43,15 @@
 			EMail:    vkamat@umich.edu
 			WWW site: http://pathfinder.engin.umich.edu
 
+UW COMPSCI
+This version is for collecting rotation data. Logs to rotationlog.txt
+You should rename log files to reflect the PWM speed of the robot too
+It will overwrite, not append, to rotationlog.txt
+Enter a rough estimate of time in seconds for the trial
+It will report the time stamp in seconds (with millisecond precision)
+followed by the ID, X position, Y position, and Rotation (degrees)
+all data is tab separated and the first line is a column header
+
 \************************************************************************/
 
 #include <iostream>
@@ -55,6 +64,9 @@
 #include <math.h>
 #include <ctime>
 #include <iomanip>
+#include <time.h>
+#include <math.h>
+
 
 #include "/usr/include/fcntl.h"
 #include <termios.h>
@@ -89,7 +101,8 @@ cv::Ptr<TagDetector> gDetector;
 
 //clock constants
 std::clock_t last;
-double duration;
+int trialtime;
+struct timespec start, end;
 
 //serial stuff
 struct termios tio;
@@ -99,6 +112,8 @@ int tty_fd;
 int res, n, res2, read1, wri;
 char buf[255];
 char buf2[255];
+
+ofstream myfile;
 
 template <typename T>
 std::string to_string(T value)
@@ -210,6 +225,7 @@ const char * finalmsg;
 std::string message;
 stringstream ss;
 unsigned nn;
+int f;
 
 struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 	double tagTextScale;
@@ -384,54 +400,15 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		myR = myR * (180.00/M_PI);
 		myR = 360-myR;
 
-		/*	We construct the message according to the format
-		*	111111		6 bit header, pads out total message size to a round number of bytes
-		*	-----		5 bit ID (max 32 decimal)
-		*	----------	10 bit y position (max 1023 rounded to the nearest pixel in decimal)
-		*	----------	10 bit x position (max 1023 rounded to the nearest pixel in decimal)
-		*	---------	9 bit rotation (max 512 rounded to the nearest degree in decimal)
-		*/
-		
-		//Add the header
-		ss << hex << to_string(63); //(decimal 63 is hex 3F is binary 111111)	
-		bitset<6> b_header(atoi(ss.str().c_str()));
-		message = b_header.to_string();		
-		ss.str("");
+		//This is where we put the updates into the file rotationlog.txt
+		if (myfile.is_open()) {
+			clock_gettime(CLOCK_REALTIME,&end);
+			myfile <<((end.tv_sec-start.tv_sec)) <<".";
+			myfile << setfill('0') << setw(3) << double(abs(end.tv_nsec)/1000000L); //milliseconds
+			myfile << "\t\t" << dd.id << "\t" << uc.x << "\t" << uc.y << "\t" << myR << endl; } //we'll close it when the time elapses
+		}
 
-		//Add the id
-		ss << hex << to_string(dd.id);
-		bitset<5> b_id(atoi(ss.str().c_str()));
-		message = message + b_id.to_string();
-		ss.str("");		
-	
-		//Add the y position
-		ss << hex << to_string(uc.y);
-		bitset<10> b_y(atoi(ss.str().c_str()));
-		message = message + b_y.to_string();
-		ss.str("");		
-	
-		//Add the x position
-		ss << hex << to_string(uc.x);
-		bitset<10> b_x(atoi(ss.str().c_str()));
-		message = message + b_x.to_string();
-		ss.str("");		
-		
-		//Add the rotation
-		ss << hex << to_string(myR);
-		bitset<9> b_r(atoi(ss.str().c_str()));
-		message = message + b_r.to_string();
-		ss.str("");	
-
-		//THIS is where we concatenate and prepare message
-		finalmsg = message.c_str(); //we need to see what the final payload size is first
-		
-		//(void)write(tty_fd, finalmsg, strlen(finalmsg));	 //This command pushes data to the wixel, if available		
-    		//cout << message << endl; //push to command line (in final version this ought to be human readable version, not binary version.)
-		cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
-
-	}
-
-/////// Override
+///operator//// Override
 	void operator()(cv::Mat& frame) {
 		static helper::PerformanceMeasurer PM;
 		vector<TagDetection> detections;
@@ -479,14 +456,11 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			//THIS IS LOOP WHEREWE GO THROUGH ALL DETECTIONS
 			//cout << detections.size();
 			//std::string mydata = to_string(int(detections.size())) ;
-			//THIS is the first byte. It will tell us how many tags to expect. 4 bytes per tag, plus this byte.
-			//std::string mystring = "echo '" + mydata + "' > /dev/ttyACM0";
-			//const char * anewstring = mystring.c_str();
-			//system(anewstring);
 			//because we kept crashing, suspected spamming the port too fast, let's sloooow down with a sample rate limiting timer
 			//should we do something more clever, dynamically change the sampling rate? ...probably not.
-			if( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) > 0.1) { //value of unit is seconds
-				last = std::clock();			
+			if( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) <= trialtime) { //compare to trial time
+				string mycommand = "a";
+				write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));			
 				for(int i=0,j=0; i<(int)detections.size(); ++i) {
 					TagDetection &dd = detections[i];
 					if(dd.hammingDistance>this->hammingThresh) continue;
@@ -494,7 +468,13 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 						writeData(dd, "tag", !this->undistortImage && !this->no_distortion);
 					}
 			}		
-	
+			else if ( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) > trialtime) //compare to trial time	
+			{
+			    	myfile.close();
+			    	string mycommand = " ";
+			    	write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));
+				exit(0);
+		        }
 
 
 
@@ -586,7 +566,6 @@ int main(const int argc, const char **argv )
 	
 
 	last = std::clock(); //runs once, initializes value
-
 	ConfigHelper::Config& cfg = GConfig::Instance();
 	if(!cfg.autoLoad("AprilTagFinder.cfg",DirHelper::getFileDir(argv[0]))) {
 		logli("[main] no AprilTagFinder.cfg file loaded");
@@ -623,6 +602,18 @@ int main(const int argc, const char **argv )
 	processor.isPhoto = is->isClass<helper::ImageSource_Photo>();
 	processor.outputDir = cfg.get("outputDir", is->getSourceDir());
 	logli("[main] detection will be logged to outputDir="<<processor.outputDir);
+	
+	myfile.open ("rotationlog.txt");
+	if (!myfile) { cout << "Failure to open file." << endl; }
+	myfile << "t\t\tID\tX\tY\tR\t" << endl;
+	cout << "Enter how long this trial should last (in seconds): ";
+	cin >> trialtime;
+	last = std::clock();
+	clock_gettime(CLOCK_REALTIME,&start);
+	//string mycommand = "a"; //this commands the robot to turn left according to the cases set forth in wireless_serial_robot
+	//write(tty_fd, mycommand.c_str(), strlen(mycommand.c_str()));
+	//if we do it here there is a 2-3 second delay before the first data is logged
+
 	is->run(processor,-1, false,
 		cfg.get<bool>("ImageSource:pause", is->getPause()),
 		cfg.get<bool>("ImageSource:loop", is->getLoop()) );
