@@ -85,6 +85,8 @@ all data is tab separated and the first line is a column header
 
 #define DEVICE "/dev/ttyACM0"
 #define SPEED B9600
+#define STOPTIME 1
+#define BILLION 1000000000L
 
 using namespace std;
 using namespace cv;
@@ -100,9 +102,11 @@ std::vector< cv::Ptr<TagFamily> > gTagFamilies;
 cv::Ptr<TagDetector> gDetector;
 
 //clock constants
-std::clock_t last;
-int trialtime;
-struct timespec start, end;
+float trialtime;
+struct timespec start, end, check;
+float diff;
+
+
 
 //serial stuff
 struct termios tio;
@@ -302,6 +306,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 
 		logli("[loadIntrinsics] K="<<K);
 		logli("[loadIntrinsics] distCoeffs="<<distCoeffs);
+
 	}
 
 	/**
@@ -435,6 +440,27 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			cv::circle(frame, cv::Point2d(dd.p[0][0],dd.p[0][1]), 3, helper::CV_GREEN, 2);
 		}
 
+	
+		clock_gettime(CLOCK_REALTIME,&check);
+		diff = (check.tv_sec - start.tv_sec) + double((check.tv_nsec - start.tv_nsec))/BILLION; //convert to seconds!!!
+		//cout << diff << endl; debug prints time
+		if( diff <= trialtime + STOPTIME) { //compare to total write file time
+			//first compare to trialtime for move command
+			if ( diff <= trialtime) {
+				string mycommand = "a";
+				write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));	
+			}
+			else { //we're over trialtime but under stoptime, we need to send stop command
+				string mycommand = " ";
+			    	write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));
+			}	
+	
+		}
+		else{ //we're over write file time
+			myfile.close();
+			exit(0); //quit program			
+		}	
+
 		//logging results
 		if(nValidDetections>0 /*&& (doLog || (isPhoto && useEachValidPhoto) || (!isPhoto && doRecord))*/) {
 			doLog=false;
@@ -458,27 +484,13 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			//std::string mydata = to_string(int(detections.size())) ;
 			//because we kept crashing, suspected spamming the port too fast, let's sloooow down with a sample rate limiting timer
 			//should we do something more clever, dynamically change the sampling rate? ...probably not.
-			if( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) <= trialtime) { //compare to trial time
-				string mycommand = "a";
-				write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));			
+
 				for(int i=0,j=0; i<(int)detections.size(); ++i) {
 					TagDetection &dd = detections[i];
 					if(dd.hammingDistance>this->hammingThresh) continue;
 						++j;//note matlab uses 1-based index
 						writeData(dd, "tag", !this->undistortImage && !this->no_distortion);
 					}
-			}		
-			else if ( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) > trialtime) //compare to trial time	
-			{
-			    	myfile.close();
-			    	string mycommand = " ";
-			    	write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));
-				exit(0);
-		        }
-
-
-
-			//fs.close();
 
 			//log optimization
 			/*std::ofstream os(
@@ -564,8 +576,6 @@ int main(const int argc, const char **argv )
 	cfsetospeed(&tio, SPEED);
 	tcsetattr(tty_fd, TCSANOW, &tio);
 	
-
-	last = std::clock(); //runs once, initializes value
 	ConfigHelper::Config& cfg = GConfig::Instance();
 	if(!cfg.autoLoad("AprilTagFinder.cfg",DirHelper::getFileDir(argv[0]))) {
 		logli("[main] no AprilTagFinder.cfg file loaded");
@@ -608,7 +618,6 @@ int main(const int argc, const char **argv )
 	myfile << "t\t\tID\tX\tY\tR\t" << endl;
 	cout << "Enter how long this trial should last (in seconds): ";
 	cin >> trialtime;
-	last = std::clock();
 	clock_gettime(CLOCK_REALTIME,&start);
 	//string mycommand = "a"; //this commands the robot to turn left according to the cases set forth in wireless_serial_robot
 	//write(tty_fd, mycommand.c_str(), strlen(mycommand.c_str()));
