@@ -1,5 +1,43 @@
 /************************************************************************\
 
+UW COMPSCI USE NOTES
+
+This version is for collecting rotation data.
+
+Usage: create a text file with one trial entry on each line
+The format is:
+RobotID Left/Right PWM time(sec) #trials
+
+For example
+
+E L 255 2.4 3
+E R 255 2.4 2
+D R 203 5 1
+
+This must be in a file called trials.txt, in the directory where the
+executable app is created.
+
+The trial begins when the robot is first observed successfully.
+
+The trial data will be saved to a file with convention similar to
+the one seen above. The files outputted from the example:
+
+E-L-255-2.4-1
+E-L-255-2.4-2
+E-L-255-2.4-3
+E-R-255-2.4-1
+E-L-255-2.4-2
+D-R-203-5-1
+
+Data reported: the time stamp in seconds (with millisecond precision)
+followed by the ID, X position, Y position, and Rotation (degrees)
+all data is tab separated and the first line is a column header
+
+In order for the robot to have the PWM settable, you need the lastest
+version of the wireless_robot_serial.
+
+
+copyright info for apriltags:
   Copyright 2011 The University of Michigan.
   All Rights Reserved.
 
@@ -42,15 +80,6 @@
             Phone:    (734)764-4325
 			EMail:    vkamat@umich.edu
 			WWW site: http://pathfinder.engin.umich.edu
-
-UW COMPSCI
-This version is for collecting rotation data. Logs to rotationlog.txt
-You should rename log files to reflect the PWM speed of the robot too
-It will overwrite, not append, to rotationlog.txt
-Enter a rough estimate of time in seconds for the trial
-It will report the time stamp in seconds (with millisecond precision)
-followed by the ID, X position, Y position, and Rotation (degrees)
-all data is tab separated and the first line is a column header
 
 \************************************************************************/
 
@@ -105,8 +134,15 @@ cv::Ptr<TagDetector> gDetector;
 float trialtime;
 struct timespec start, end, check;
 float diff;
+bool firsttimeflag = true;
 
-
+//I know, global variables everywhere, not good practice.
+char robotID;
+char leftright;
+uint8_t PWMval;
+float timeval;
+int trialnums;
+int iterationnum;
 
 //serial stuff
 struct termios tio;
@@ -118,6 +154,8 @@ char buf[255];
 char buf2[255];
 
 ofstream myfile;
+ifstream trialsfile;
+string filename;
 
 template <typename T>
 std::string to_string(T value)
@@ -125,6 +163,54 @@ std::string to_string(T value)
 	std::ostringstream os ;
 	os << value ;
 	return os.str() ;
+}
+
+
+void trialinit () {
+	string store; //temp storage for input
+
+	if (!getline(trialsfile, store,' ')) { cout << "Input file end (or error)." << endl; exit(1);}
+	robotID = store.at(0); //Robot ID
+	if (!getline(trialsfile, store,' ')) { cout << "Input file end (or error)." << endl; exit(1);}
+	leftright = store.at(0); //Direction (left or right)
+	filename = robotID;
+	filename = filename + "-";
+	filename = filename + leftright;
+	filename = filename + "-"; 
+	if (!getline(trialsfile, store,' ')) { cout << "Input file end (or error)." << endl; exit(1);}
+	PWMval = atoi(store.c_str()) ; //PWM (0-255)
+	filename = filename + store + "-";
+	if (!getline(trialsfile, store,' ')) { cout << "Input file end (or error)." << endl; exit(1);}
+	timeval = atof(store.c_str()) ; //Seconds
+	filename = filename + store + "-";
+	if (!getline(trialsfile, store)) { cout << "Input file end (or error)." << endl; exit(1);}
+	trialnums = atoi(store.c_str()) ; //Iterations
+
+	iterationnum = 1;
+	store = filename + to_string(iterationnum);
+	myfile.open(store.c_str());
+	if (!myfile) { cout << "Failure to open file." << endl; exit(1);}
+
+	stringstream ss;
+	string pwmcommand;
+
+	ss << hex << to_string(PWMval);	
+	string test = ss.str();	
+	
+	pwmcommand = "\x70"; //send 'p'	
+
+	write(tty_fd,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
+
+	write(tty_fd,test.c_str(),strlen(test.c_str()));
+
+	cout << store << endl;
+
+
+	myfile << "t\t\tID\tX\tY\tR\t" << endl;
+
+	firsttimeflag = true;
+	clock_gettime(CLOCK_REALTIME,&start);
+	//read and store current line of trial data
 }
 
 //A set of markers to be used for camera pose optimization
@@ -227,7 +313,7 @@ struct MarkerSet {
 
 const char * finalmsg;
 std::string message;
-stringstream ss;
+
 unsigned nn;
 int f;
 
@@ -405,6 +491,11 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		myR = myR * (180.00/M_PI);
 		myR = 360-myR;
 
+		if (firsttimeflag) {
+			clock_gettime(CLOCK_REALTIME,&start); //so that start time is as close as possible to first data point
+			firsttimeflag = false;
+		}
+
 		//This is where we put the updates into the file rotationlog.txt
 		if (myfile.is_open()) {
 			clock_gettime(CLOCK_REALTIME,&end);
@@ -439,18 +530,24 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			helper::drawHomography(frame, Homo);
 			cv::circle(frame, cv::Point2d(dd.p[0][0],dd.p[0][1]), 3, helper::CV_GREEN, 2);
 		}
-
+		if (firsttimeflag) { clock_gettime(CLOCK_REALTIME,&start); } //until we write the first data point, we will keep resetting the start time
 	
 		clock_gettime(CLOCK_REALTIME,&check);
 		diff = (check.tv_sec - start.tv_sec) + double((check.tv_nsec - start.tv_nsec))/BILLION; //convert to seconds!!!
-		//cout << diff << endl; debug prints time
-		if( diff <= trialtime + STOPTIME) { //compare to total write file time
+		//cout << diff << endl; //debug prints time
+		if( diff <= timeval + STOPTIME) { //compare to total write file time
 			//first compare to trialtime for move command
-			if ( diff <= trialtime) {
-				string mycommand = "a";
+			if ( diff <= timeval) {
+				//cout << "Sent move command." << endl;
+				string mycommand;
+				char left = 'L';
+				char right = 'R';
+				if (leftright == left) { mycommand = "a"; }
+				else if (leftright == right) { mycommand = "d";}
 				write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));	
 			}
 			else { //we're over trialtime but under stoptime, we need to send stop command
+				//cout << "Sent stop command." << endl;
 				string mycommand = " ";
 			    	write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));
 			}	
@@ -458,7 +555,21 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		}
 		else{ //we're over write file time
 			myfile.close();
-			exit(0); //quit program			
+			cout << "iteration: " << iterationnum << ", trials total: " << trialnums << endl;
+
+			if (iterationnum < trialnums) // we should run another trial
+			{
+				iterationnum++;
+				firsttimeflag = true; //reset flag
+				clock_gettime(CLOCK_REALTIME,&start); //reset time
+				string tempstring = filename + to_string(iterationnum); 
+				myfile.open(tempstring.c_str()); //open new file
+				cout << tempstring << endl;
+				cout << "Next iteration!" << endl;
+			
+			}
+			else
+			{  trialinit(); cout << "Run next type of trial." << endl; } //we should run the next trial		
 		}	
 
 		//logging results
@@ -613,15 +724,8 @@ int main(const int argc, const char **argv )
 	processor.outputDir = cfg.get("outputDir", is->getSourceDir());
 	logli("[main] detection will be logged to outputDir="<<processor.outputDir);
 	
-	myfile.open ("rotationlog.txt");
-	if (!myfile) { cout << "Failure to open file." << endl; }
-	myfile << "t\t\tID\tX\tY\tR\t" << endl;
-	cout << "Enter how long this trial should last (in seconds): ";
-	cin >> trialtime;
-	clock_gettime(CLOCK_REALTIME,&start);
-	//string mycommand = "a"; //this commands the robot to turn left according to the cases set forth in wireless_serial_robot
-	//write(tty_fd, mycommand.c_str(), strlen(mycommand.c_str()));
-	//if we do it here there is a 2-3 second delay before the first data is logged
+	trialsfile.open("trials.txt");
+	trialinit();
 
 	is->run(processor,-1, false,
 		cfg.get<bool>("ImageSource:pause", is->getPause()),
