@@ -6,13 +6,13 @@ This version is for collecting rotation data.
 
 Usage: create a text file with one trial entry on each line
 The format is:
-RobotID Left/Right PWM time(sec) #trials
+RobotID Left/Right PWM time(milliseconds) #trials
 
 For example
 
-E L 255 2.4 3
-E R 255 2.4 2
-D R 203 5 1
+E L 255 2400 3
+E R 255 240 2
+D R 203 500 1
 
 This must be in a file called trials.txt, in the directory where the
 executable app is created.
@@ -22,14 +22,14 @@ The trial begins when the robot is first observed successfully.
 The trial data will be saved to a file with convention similar to
 the one seen above. The files outputted from the example:
 
-E-L-255-2.4-1
-E-L-255-2.4-2
-E-L-255-2.4-3
-E-R-255-2.4-1
-E-L-255-2.4-2
-D-R-203-5-1
+E-L-255-2400-1
+E-L-255-2400-2
+E-L-255-240-3
+E-R-255-240-1
+E-L-255-240-2
+D-R-203-500-1
 
-Data reported: the time stamp in seconds (with millisecond precision)
+Data reported: the time stamp in milliseconds
 followed by the ID, X position, Y position, and Rotation (degrees)
 all data is tab separated and the first line is a column header
 
@@ -114,8 +114,9 @@ copyright info for apriltags:
 
 #define DEVICE "/dev/ttyACM0"
 #define SPEED B9600
-#define STOPTIME 1
-#define BILLION 1000000000L
+#define STOPTIME 100
+//^ STOPTIME in milliseconds
+#define MILLION 1000000L
 
 using namespace std;
 using namespace cv;
@@ -133,14 +134,14 @@ cv::Ptr<TagDetector> gDetector;
 //clock constants
 float trialtime;
 struct timespec start, end, check;
-float diff;
+uint32_t diff;
 bool firsttimeflag = true;
 
 //I know, global variables everywhere, not good practice.
 char robotID;
 char leftright;
 uint8_t PWMval;
-float timeval;
+uint32_t timeval;
 int trialnums;
 int iterationnum;
 
@@ -181,13 +182,13 @@ void trialinit () {
 	PWMval = atoi(store.c_str()) ; //PWM (0-255)
 	filename = filename + store + "-";
 	if (!getline(trialsfile, store,' ')) { cout << "Input file end (or error)." << endl; exit(1);}
-	timeval = atof(store.c_str()) ; //Seconds
+	timeval = atof(store.c_str()) ; //nume milliseconds
 	filename = filename + store + "-";
 	if (!getline(trialsfile, store)) { cout << "Input file end (or error)." << endl; exit(1);}
 	trialnums = atoi(store.c_str()) ; //Iterations
 
 	iterationnum = 1;
-	store = filename + to_string(iterationnum);
+	store = filename + to_string(iterationnum) + ".txt";
 	myfile.open(store.c_str());
 	if (!myfile) { cout << "Failure to open file." << endl; exit(1);}
 
@@ -499,8 +500,8 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		//This is where we put the updates into the file rotationlog.txt
 		if (myfile.is_open()) {
 			clock_gettime(CLOCK_REALTIME,&end);
-			myfile <<((end.tv_sec-start.tv_sec)) <<".";
-			myfile << setfill('0') << setw(3) << double(abs(end.tv_nsec)/1000000L); //milliseconds
+			myfile <<((end.tv_sec-start.tv_sec)); //seconds
+			myfile << setfill('0') << setw(3) << double(abs(end.tv_nsec)/1000000L); //milliseconds, format example 4300 means 4.3 seconds
 			myfile << "\t\t" << dd.id << "\t" << uc.x << "\t" << uc.y << "\t" << myR << endl; } //we'll close it when the time elapses
 		}
 
@@ -533,8 +534,8 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		if (firsttimeflag) { clock_gettime(CLOCK_REALTIME,&start); } //until we write the first data point, we will keep resetting the start time
 	
 		clock_gettime(CLOCK_REALTIME,&check);
-		diff = (check.tv_sec - start.tv_sec) + double((check.tv_nsec - start.tv_nsec))/BILLION; //convert to seconds!!!
-		//cout << diff << endl; //debug prints time
+		diff = (check.tv_sec - start.tv_sec)*1000 + double((check.tv_nsec - start.tv_nsec))/MILLION; //convert to seconds!!!
+		//cout << diff << " vs. " << timeval + STOPTIME << endl; //debug prints time
 		if( diff <= timeval + STOPTIME) { //compare to total write file time
 			//first compare to trialtime for move command
 			if ( diff <= timeval) {
@@ -554,15 +555,15 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 	
 		}
 		else{ //we're over write file time
-			myfile.close();
 			cout << "iteration: " << iterationnum << ", trials total: " << trialnums << endl;
+			myfile.close();
 
 			if (iterationnum < trialnums) // we should run another trial
 			{
 				iterationnum++;
 				firsttimeflag = true; //reset flag
 				clock_gettime(CLOCK_REALTIME,&start); //reset time
-				string tempstring = filename + to_string(iterationnum); 
+				string tempstring = filename + to_string(iterationnum)+".txt"; 
 				myfile.open(tempstring.c_str()); //open new file
 				cout << tempstring << endl;
 				cout << "Next iteration!" << endl;
