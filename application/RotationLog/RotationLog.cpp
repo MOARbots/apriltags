@@ -182,7 +182,7 @@ void trialinit () {
 	PWMval = atoi(store.c_str()) ; //PWM (0-255)
 	filename = filename + store + "-";
 	if (!getline(trialsfile, store,' ')) { cout << "Input file end (or error)." << endl; exit(1);}
-	timeval = atof(store.c_str()) ; //nume milliseconds
+	timeval = atof(store.c_str()) ; //number milliseconds
 	filename = filename + store + "-";
 	if (!getline(trialsfile, store)) { cout << "Input file end (or error)." << endl; exit(1);}
 	trialnums = atoi(store.c_str()) ; //Iterations
@@ -195,6 +195,7 @@ void trialinit () {
 	stringstream ss;
 	string pwmcommand;
 
+	if (PWMval ==0 ) { PWMval = 1; cout << "This code cannot send a PWM value of zero. Sending value 1 instead." << endl; }
 	ss << hex << to_string(PWMval);	
 	string test = ss.str();	
 	
@@ -205,7 +206,6 @@ void trialinit () {
 	write(tty_fd,test.c_str(),strlen(test.c_str()));
 
 	cout << store << endl;
-
 
 	myfile << "t\t\tID\tX\tY\tR\t" << endl;
 
