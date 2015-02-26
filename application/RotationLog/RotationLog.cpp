@@ -31,7 +31,7 @@ D-R-203-500-1
 
 Data reported: the time stamp in milliseconds
 followed by the ID, X position, Y position, and Rotation (degrees)
-all data is tab separated and the first line is a column header
+all data is tab separated and there is no column header (first line is first data point)
 
 In order for the robot to have the PWM settable, you need the lastest
 version of the wireless_robot_serial.
@@ -114,7 +114,7 @@ copyright info for apriltags:
 
 #define DEVICE "/dev/ttyACM0"
 #define SPEED B9600
-#define STOPTIME 100
+#define STOPTIME 500
 //^ STOPTIME in milliseconds
 #define MILLION 1000000L
 
@@ -135,7 +135,9 @@ cv::Ptr<TagDetector> gDetector;
 float trialtime;
 struct timespec start, end, check;
 uint32_t diff;
-bool firsttimeflag = true;
+bool firsttimeflag = true; //a flag to signify that we are entering the record a data point step for the first time, so we should start the clock here
+bool firstmovecommand = true; //a flag to signify this is the first time we send the move command, to avoid unecessary reptition of sending
+bool firststopcommand = true; //a flag to signify this is the first time we send the stop command, to avoid unecessary reptition of sending
 
 //I know, global variables everywhere, not good practice.
 char robotID;
@@ -539,32 +541,41 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		if( diff <= timeval + STOPTIME) { //compare to total write file time
 			//first compare to trialtime for move command
 			if ( diff <= timeval) {
-				//cout << "Sent move command." << endl;
-				string mycommand;
-				char left = 'L';
-				char right = 'R';
-				if (leftright == left) { mycommand = "a"; }
-				else if (leftright == right) { mycommand = "d";}
-				write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));	
+				if (firstmovecommand) {				
+					cout << "Sent move command." << endl;
+					string mycommand;
+					char left = 'L';
+					char right = 'R';
+					if (leftright == left) { mycommand = "a"; }
+					else if (leftright == right) { mycommand = "d";}
+					write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));
+					firstmovecommand = false;
+				}	
 			}
 			else { //we're over trialtime but under stoptime, we need to send stop command
-				//cout << "Sent stop command." << endl;
-				string mycommand = " ";
-			    	write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));
+				if (firststopcommand) {				
+					cout << "Sent stop command." << endl;
+					string mycommand = " ";
+			    		write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));
+					firststopcommand = false;
+				}
 			}	
 	
 		}
 		else{ //we're over write file time
 			cout << "iteration: " << iterationnum << ", trials total: " << trialnums << endl;
 			myfile.close();
-
+			firstmovecommand = true;
+			firststopcommand = true;
+	
 			if (iterationnum < trialnums) // we should run another trial
 			{
 				iterationnum++;
-				firsttimeflag = true; //reset flag
+				firsttimeflag = true; //reset flags
 				clock_gettime(CLOCK_REALTIME,&start); //reset time
 				string tempstring = filename + to_string(iterationnum)+".txt"; 
 				myfile.open(tempstring.c_str()); //open new file
+				myfile << "t\t\tID\tX\tY\tR\t" << endl;
 				cout << tempstring << endl;
 				cout << "Next iteration!" << endl;
 			
