@@ -208,6 +208,7 @@ struct MarkerSet {
 
 const char * finalmsg;
 std::string message;
+string pwmcommand;
 stringstream ss;
 unsigned nn;
 
@@ -391,42 +392,28 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		*	----------	10 bit x position (max 1023 rounded to the nearest pixel in decimal)
 		*	---------	9 bit rotation (max 512 rounded to the nearest degree in decimal)
 		*/
-		
-		//Add the header
-		ss << hex << to_string(63); //(decimal 63 is hex 3F is binary 111111)	
-		bitset<6> b_header(atoi(ss.str().c_str()));
-		message = b_header.to_string();		
-		ss.str("");
 
-		//Add the id
-		ss << hex << to_string(dd.id);
-		bitset<5> b_id(atoi(ss.str().c_str()));
-		message = message + b_id.to_string();
-		ss.str("");		
-	
-		//Add the y position
-		ss << hex << to_string(uc.y);
-		bitset<10> b_y(atoi(ss.str().c_str()));
-		message = message + b_y.to_string();
-		ss.str("");		
-	
-		//Add the x position
-		ss << hex << to_string(uc.x);
-		bitset<10> b_x(atoi(ss.str().c_str()));
-		message = message + b_x.to_string();
-		ss.str("");		
-		
-		//Add the rotation
-		ss << hex << to_string(myR);
-		bitset<9> b_r(atoi(ss.str().c_str()));
-		message = message + b_r.to_string();
-		ss.str("");	
+		//Write the packet format. Not very reconfigurable yet. TODO: make this work with some defines.
+		uint8_t bytearray[5];
+		bytearray[0] = 63;
+		bytearray[0] = bytearray[0] << 2;
+		uint8_t IDint = dd.id;
+		bytearray[0] = bytearray[0] | IDint >> 3;
+		bytearray[1] = IDint << 5;
+		uint16_t Yint = uc.y;
+		bytearray[1] = bytearray[1] | ( (Yint >> 5) & (0x1F) ); //take myY bits 10 thru 6
+		bytearray[2] = Yint << 3; //take myY bits 5 thru 1
+		uint16_t Xint = uc.x;
+		bytearray[2] = bytearray[2] | ( (Xint >> 7) & (0x07) ); //take myX bits 10 thru 8
+		uint16_t myRint = myR;
+		bytearray[3] =  Xint << 1; //take myX bits 7 thru 1
+		bytearray[3] = bytearray[3] | ( (myRint >> 8) & 0x01 ); //take myRint bit 9
+		bytearray[4] = myRint; //take myRint bits 8 thru 1
 
-		//THIS is where we concatenate and prepare message
-		finalmsg = message.c_str(); //we need to see what the final payload size is first
+		//This is where we concatenate and prepare message
+		finalmsg = reinterpret_cast <const char *> (bytearray); //does bytearray already point at first element in C?
 		
-		//(void)write(tty_fd, finalmsg, strlen(finalmsg));	 //This command pushes data to the wixel, if available		
-    		//cout << message << endl; //push to command line (in final version this ought to be human readable version, not binary version.)
+		(void)write(tty_fd, finalmsg, 5);//This command pushes data to the wixel, if available
 		cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
 
 	}
@@ -485,7 +472,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			//system(anewstring);
 			//because we kept crashing, suspected spamming the port too fast, let's sloooow down with a sample rate limiting timer
 			//should we do something more clever, dynamically change the sampling rate? ...probably not.
-			if( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) > 0.1) { //value of unit is seconds
+			if( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) > 0.01) { //value of unit is seconds
 				last = std::clock();			
 				for(int i=0,j=0; i<(int)detections.size(); ++i) {
 					TagDetection &dd = detections[i];
@@ -520,6 +507,11 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 
 	void handle(char key) {
 		switch (key) {
+		case 'g': //Send a g command, for starting robots
+			pwmcommand = "\x67"; //send 'g'	
+			write(tty_fd,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
+			cout << "Sent the start command, 'g', to the robot." << endl;
+			break;
 		case 'd':
 			gDetector->segDecimate = !(gDetector->segDecimate);
 			logli("[ProcessVideo] gDetector.segDecimate="<<gDetector->segDecimate); break;
