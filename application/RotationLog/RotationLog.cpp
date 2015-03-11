@@ -197,15 +197,15 @@ void trialinit () {
 	stringstream ss;
 	string pwmcommand;
 
-	if (PWMval ==0 ) { PWMval = 1; cout << "This code cannot send a PWM value of zero. Sending value 1 instead." << endl; }
+	//if (PWMval ==0 ) { PWMval = 1; cout << "This code cannot send a PWM value of zero. Sending value 1 instead." << endl; }
 	ss << hex << to_string(PWMval);	
 	string test = ss.str();	
 	
 	pwmcommand = "\x70"; //send 'p'	
 
-	write(tty_fd,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
+	write(tty_fd,pwmcommand.c_str(),1);
 
-	write(tty_fd,test.c_str(),strlen(test.c_str()));
+	write(tty_fd,test.c_str(),1);
 
 	cout << store << endl;
 
