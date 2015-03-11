@@ -73,6 +73,7 @@
 
 #define DEVICE "/dev/ttyACM0"
 #define SPEED B9600
+#define MILLION 1000000L
 
 using namespace std;
 using namespace cv;
@@ -472,7 +473,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			//system(anewstring);
 			//because we kept crashing, suspected spamming the port too fast, let's sloooow down with a sample rate limiting timer
 			//should we do something more clever, dynamically change the sampling rate? ...probably not.
-			if( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) > 0.01) { //value of unit is seconds
+			if( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) > 0.1) { //value of unit is seconds
 				last = std::clock();			
 				for(int i=0,j=0; i<(int)detections.size(); ++i) {
 					TagDetection &dd = detections[i];
@@ -511,6 +512,11 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			pwmcommand = "\x67"; //send 'g'	
 			write(tty_fd,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
 			cout << "Sent the start command, 'g', to the robot." << endl;
+			break;
+		case 'c': //Send a c command, for continuing robots
+			pwmcommand = "\x63"; //send 'c'	
+			write(tty_fd,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
+			cout << "Sent the continue command, 'c', to the robot." << endl;
 			break;
 		case 'd':
 			gDetector->segDecimate = !(gDetector->segDecimate);
