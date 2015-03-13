@@ -1,0 +1,14 @@
+language: cpp
+compiler:
+  - gcc
+
+before_script:
+  - wget https://raw.githubusercontent.com/jayrambhia/Install-OpenCV/master/Ubuntu/opencv_install.sh
+  - chmod +x opencv_install.sh
+  - ./opencv_install.sh
+  - sudo ldconfig
+  - mkdir build
+  - cd build
+  - cmake ..
+
+script: make
