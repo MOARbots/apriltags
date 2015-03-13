@@ -3,10 +3,15 @@ compiler:
   - gcc
 
 before_script:
-  - wget https://raw.githubusercontent.com/jayrambhia/Install-OpenCV/master/Ubuntu/opencv_latest.sh
-  - chmod +x opencv_latest.sh
-  - ./opencv_latest.sh
-  - sudo ldconfig
+  - git clone https://github.com/Itseez/opencv.git
+  - cd opencv
+  - git checkout tags/2.4.11
+  - mkdir build
+  - cd build
+  - cmake ..
+  - make -j8
+  - sudo make -j8 install
+  - cd ../..
   - mkdir build
   - cd build
   - cmake ..
