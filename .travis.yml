@@ -5,7 +5,7 @@ compiler:
 before_script:
   - wget https://raw.githubusercontent.com/jayrambhia/Install-OpenCV/master/Ubuntu/opencv_latest.sh
   - chmod +x opencv_latest.sh
-  - ./opencv_install.sh
+  - ./opencv_latest.sh
   - sudo ldconfig
   - mkdir build
   - cd build
