@@ -1,0 +1,19 @@
+language: cpp
+compiler:
+  - gcc
+
+before_script:
+  - git clone https://github.com/Itseez/opencv.git
+  - cd opencv
+  - git checkout tags/2.4.11
+  - mkdir build
+  - cd build
+  - cmake ..
+  - make -j8
+  - sudo make -j8 install
+  - cd ../..
+  - mkdir build
+  - cd build
+  - cmake ..
+
+script: make
