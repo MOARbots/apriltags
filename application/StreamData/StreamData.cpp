@@ -56,6 +56,7 @@
 #include <ctime>
 #include <iomanip>
 
+#include <errno.h>
 #include "/usr/include/fcntl.h"
 #include <termios.h>
 #include <sys/ioctl.h>
@@ -71,7 +72,9 @@
 #include "apriltag/apriltag.hpp"
 #include "apriltag/TagFamilyFactory.hpp"
 
-#define DEVICE "/dev/ttyACM0"
+#define DEVICE0 "/dev/ttyACM0"
+#define DEVICE1 "/dev/ttyACM1"
+//Device 1 is for debug only
 #define SPEED B9600
 #define MILLION 1000000L
 
@@ -96,10 +99,67 @@ double duration;
 struct termios tio;
 struct termios stdio;
 struct termios old_stdio;
-int tty_fd;
-int res, n, res2, read1, wri;
-char buf[255];
-char buf2[255];
+int tty_fd0, tty_fd1;
+
+int set_interface_attribs (int fd, int speed, int parity)
+{
+        struct termios tty;
+        memset (&tty, 0, sizeof tty);
+        if (tcgetattr (fd, &tty) != 0)
+        {
+                printf ("error %d from tcgetattr", errno);
+                return -1;
+        }
+
+        cfsetospeed (&tty, speed);
+        cfsetispeed (&tty, speed);
+
+        tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8-bit chars
+        // disable IGNBRK for mismatched speed tests; otherwise receive break
+        // as \000 chars
+        tty.c_iflag &= ~IGNBRK;         // disable break processing
+        tty.c_lflag = 0;                // no signaling chars, no echo,
+                                        // no canonical processing
+        tty.c_oflag = 0;                // no remapping, no delays
+        tty.c_cc[VMIN]  = 0;            // read doesn't block
+        tty.c_cc[VTIME] = 0;            // VMIN=0, VTIME=0 'nonblocking' case, returns # byte available
+
+        tty.c_iflag &= ~(IXON | IXOFF | IXANY); // shut off xon/xoff ctrl
+
+        tty.c_cflag |= (CLOCAL | CREAD);// ignore modem controls,
+                                        // enable reading
+        tty.c_cflag &= ~(PARENB | PARODD);      // shut off parity
+        tty.c_cflag |= parity;
+        tty.c_cflag &= ~CSTOPB;
+        tty.c_cflag &= ~CRTSCTS;
+
+        if (tcsetattr (fd, TCSANOW, &tty) != 0)
+        {
+                printf ("error %d from tcsetattr", errno);
+                return -1;
+        }
+        return 0;
+}
+
+void set_blocking (int fd, int should_block)
+{
+        struct termios tty;
+        memset (&tty, 0, sizeof tty);
+        if (tcgetattr (fd, &tty) != 0)
+        {
+                printf("error %d from tggetattr", errno);
+                return;
+        }
+
+        tty.c_cc[VMIN]  = should_block ? 1 : 0;
+        tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
+
+        if (tcsetattr (fd, TCSANOW, &tty) != 0)
+                printf ("error %d setting term attributes", errno);
+}
+
+
+
 
 template <typename T>
 std::string to_string(T value)
@@ -210,8 +270,7 @@ struct MarkerSet {
 const char * finalmsg;
 std::string message;
 string pwmcommand;
-stringstream ss;
-unsigned nn;
+unsigned char c;
 
 struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 	double tagTextScale;
@@ -414,8 +473,8 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		//This is where we concatenate and prepare message
 		finalmsg = reinterpret_cast <const char *> (bytearray); //does bytearray already point at first element in C?
 		
-		(void)write(tty_fd, finalmsg, 5);//This command pushes data to the wixel, if available
-		cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
+		write(tty_fd0, finalmsg, 5);//This command pushes data to the wixel, if available
+		//cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
 
 	}
 
@@ -429,6 +488,27 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		if(this->undistortImage) cv::undistort(orgFrame,frame,K,distCoeffs);
 		gDetector->process(frame, detections);
 		logld("[TagDetector] process time = "<<PM.toc()<<" sec.");
+
+		//cout << "hello" << endl;
+		/*There is no default format expected of debug output from robots.
+		 *The only expectation is that debug from robots will be represented as all ASCII characters
+		 *It is also a good idea if robots do not send data too often.
+		 *In competition settings, we may turn off this line. Robots should turn off debug output (or risk buffer overflow)
+		 * On the robot side it may be prudent to implement a flush on the radioTx buffers to avoid that outcome.
+		 */
+		//if ( read(tty_fd1, &c, 1) > 0 ) { //if read data from Device1 is successful
+		//	cout << c << '-'; //redirect it to the terminal. The robot side debug ought to print newlines when it wants them.		
+		//}
+
+		char buf [1024]; //way more than enough, but we're on a laptop, where 1kb of memory is not significant.
+		int n = read (tty_fd0, buf, sizeof buf);  // read up to 100 characters if ready to read
+		
+		if (n>0) {
+		    for (int count = 0; count <=n ; count++ ){
+			cout << buf[count];
+			cout.flush();
+		    }
+		}
 
 		//visualization
 		int nValidDetections=0;
@@ -452,28 +532,9 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			static int cnt=0;
 			std::string fileid = helper::num2str(cnt, 5);
 
-			//log images
-			//if(logVisFrame) cv::imwrite(outputDir+"/AprilTagFinder_frame_"+fileid+".png", frame);
-			//if(!isPhoto) cv::imwrite(outputDir+"/AprilTagFinder_orgframe_"+fileid+".png", orgFrame);
-
-			//log detections
-			/*std::ofstream fs((outputDir+"/AprilTagFinder_log_"+fileid+".m").c_str());
-			fs<<"% AprilTagFinder log "<<cnt<<std::endl;
-			fs<<"% @ "<<LogHelper::getCurrentTimeString()<<std::endl;
-			fs<<"K="<<K<<";"<<std::endl;
-			fs<<"distCoeffs="<<distCoeffs<<";"<<std::endl;
-			fs<<"tags={};\n"<<std::endl;*/
-		
-			//THIS IS LOOP WHEREWE GO THROUGH ALL DETECTIONS
-			//cout << detections.size();
-			//std::string mydata = to_string(int(detections.size())) ;
-			//THIS is the first byte. It will tell us how many tags to expect. 4 bytes per tag, plus this byte.
-			//std::string mystring = "echo '" + mydata + "' > /dev/ttyACM0";
-			//const char * anewstring = mystring.c_str();
-			//system(anewstring);
 			//because we kept crashing, suspected spamming the port too fast, let's sloooow down with a sample rate limiting timer
 			//should we do something more clever, dynamically change the sampling rate? ...probably not.
-			if( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) > 0.1) { //value of unit is seconds
+			if( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) > 0.01) { //value of unit is seconds
 				last = std::clock();			
 				for(int i=0,j=0; i<(int)detections.size(); ++i) {
 					TagDetection &dd = detections[i];
@@ -482,40 +543,20 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 						writeData(dd, "tag", !this->undistortImage && !this->no_distortion);
 					}
 			}		
-	
-
-
-
-			//fs.close();
-
-			//log optimization
-			/*std::ofstream os(
-					(outputDir + "/AprilTagFinder_opt_" + fileid + ".m").c_str());
-			os << "% AprilTagFinder optimization log " << cnt << std::endl;
-			os << "% @ " << LogHelper::getCurrentTimeString() << std::endl;
-			os << "K=" << K << ";" << std::endl;
-			os << "distCoeffs=" << distCoeffs << ";" << std::endl;
-			os << "% note U are distorted image points (raw image points)" << std::endl;
-			for (int i = 0; i < (int) markerSets.size(); ++i) {
-				cv::Mat Rwc, twc;
-				optimizeOn(detections, markerSets[i], Rwc, twc, os);
-			}
-			os.close();*/
-
 			++cnt;
-		}//if doLog
+		}
 	}
 
 	void handle(char key) {
 		switch (key) {
 		case 'g': //Send a g command, for starting robots
 			pwmcommand = "\x67"; //send 'g'	
-			write(tty_fd,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
+			write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
 			cout << "Sent the start command, 'g', to the robot." << endl;
 			break;
 		case 'c': //Send a c command, for continuing robots
 			pwmcommand = "\x63"; //send 'c'	
-			write(tty_fd,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
+			write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
 			cout << "Sent the continue command, 'c', to the robot." << endl;
 			break;
 		case 'd':
@@ -570,18 +611,13 @@ int main(const int argc, const char **argv )
 			return -1;
 		}
 	}
-	
-	tcgetattr(STDOUT_FILENO, &old_stdio);//save current port settings
-	bzero(&tio, sizeof(tio));
-	tio.c_iflag = 0;
-	tio.c_iflag = IGNPAR | IGNBRK | IXOFF;
-	tio.c_oflag = 0;
-	tio.c_cflag = CS8 | CREAD | CLOCAL;
-	tio.c_lflag = ICANON;
-	tty_fd = open(DEVICE, O_RDWR | O_NOCTTY);
-	cfsetospeed(&tio, SPEED);
-	tcsetattr(tty_fd, TCSANOW, &tio);
-	
+
+	tty_fd0 = open (DEVICE0, O_RDWR | O_NOCTTY | O_SYNC);
+	if (tty_fd0 < 0) {
+            printf ("error %d opening %s: %s", errno, DEVICE0, strerror (errno));
+	}
+	set_interface_attribs (tty_fd0, SPEED, 0);  // set speed, 8n1 (no parity)
+	set_blocking (tty_fd0, 0);                // set no blocking
 
 	last = std::clock(); //runs once, initializes value
 
