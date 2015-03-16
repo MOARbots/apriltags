@@ -92,7 +92,7 @@ std::vector< cv::Ptr<TagFamily> > gTagFamilies;
 cv::Ptr<TagDetector> gDetector;
 
 //clock constants
-std::clock_t last;
+std::clock_t last, last1;
 double duration;
 
 //serial stuff
@@ -474,7 +474,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		finalmsg = reinterpret_cast <const char *> (bytearray); //does bytearray already point at first element in C?
 		
 		write(tty_fd0, finalmsg, 5);//This command pushes data to the wixel, if available
-		//cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
+		cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
 
 	}
 
@@ -500,15 +500,18 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		//	cout << c << '-'; //redirect it to the terminal. The robot side debug ought to print newlines when it wants them.		
 		//}
 
-		char buf [1024]; //way more than enough, but we're on a laptop, where 1kb of memory is not significant.
-		int n = read (tty_fd0, buf, sizeof buf);  // read up to 100 characters if ready to read
-		
-		if (n>0) {
-		    for (int count = 0; count <=n ; count++ ){
-			cout << buf[count];
-			cout.flush();
+		//if( ( (double)(std::clock() - last1)/ (double)CLOCKS_PER_SEC ) > 0.5) { //value of unit is seconds
+		    //last1 = std::clock();
+		    char buf [1024]; //way more than enough, but we're on a laptop, where 1kb of memory is not significant.
+		    int n = read (tty_fd0, buf, sizeof buf);  // read up to 100 characters if ready to read
+		    if (n>0) {
+			for (int count = 0; count <=n ; count++ ){
+			    cout << buf[count];
+			    cout.flush();
+		        }
 		    }
-		}
+		//}
+
 
 		//visualization
 		int nValidDetections=0;
@@ -531,6 +534,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			doLog=false;
 			static int cnt=0;
 			std::string fileid = helper::num2str(cnt, 5);
+
 
 			//because we kept crashing, suspected spamming the port too fast, let's sloooow down with a sample rate limiting timer
 			//should we do something more clever, dynamically change the sampling rate? ...probably not.
@@ -613,6 +617,7 @@ int main(const int argc, const char **argv )
 	}
 
 	tty_fd0 = open (DEVICE0, O_RDWR | O_NOCTTY | O_SYNC);
+	fcntl(tty_fd0, F_SETFL, FNDELAY); //necessary for immediate return on read functions
 	if (tty_fd0 < 0) {
             printf ("error %d opening %s: %s", errno, DEVICE0, strerror (errno));
 	}
@@ -620,6 +625,7 @@ int main(const int argc, const char **argv )
 	set_blocking (tty_fd0, 0);                // set no blocking
 
 	last = std::clock(); //runs once, initializes value
+	last1 = std::clock();
 
 	ConfigHelper::Config& cfg = GConfig::Instance();
 	if(!cfg.autoLoad("AprilTagFinder.cfg",DirHelper::getFileDir(argv[0]))) {
