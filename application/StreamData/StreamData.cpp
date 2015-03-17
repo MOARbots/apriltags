@@ -47,22 +47,17 @@
 
 #include <iostream>
 #include <string>
-#include <fstream>
-#include <sstream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <cmath>
 #include <math.h>
 #include <ctime>
 #include <iomanip>
-
+#include <time.h>
 #include <errno.h>
 #include "/usr/include/fcntl.h"
 #include <termios.h>
 #include <sys/ioctl.h>
-
-//#include "serial.h"
-
 #include <unistd.h>
 #include <cstdlib>
 
@@ -92,8 +87,8 @@ std::vector< cv::Ptr<TagFamily> > gTagFamilies;
 cv::Ptr<TagDetector> gDetector;
 
 //clock constants
-std::clock_t last, last1;
-double duration;
+struct timespec start, check;
+uint32_t diff, timeval;
 
 //serial stuff
 struct termios tio;
@@ -489,29 +484,14 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		gDetector->process(frame, detections);
 		logld("[TagDetector] process time = "<<PM.toc()<<" sec.");
 
-		//cout << "hello" << endl;
-		/*There is no default format expected of debug output from robots.
-		 *The only expectation is that debug from robots will be represented as all ASCII characters
-		 *It is also a good idea if robots do not send data too often.
-		 *In competition settings, we may turn off this line. Robots should turn off debug output (or risk buffer overflow)
-		 * On the robot side it may be prudent to implement a flush on the radioTx buffers to avoid that outcome.
-		 */
-		//if ( read(tty_fd1, &c, 1) > 0 ) { //if read data from Device1 is successful
-		//	cout << c << '-'; //redirect it to the terminal. The robot side debug ought to print newlines when it wants them.		
-		//}
-
-		//if( ( (double)(std::clock() - last1)/ (double)CLOCKS_PER_SEC ) > 0.5) { //value of unit is seconds
-		    //last1 = std::clock();
-		    char buf [1024]; //way more than enough, but we're on a laptop, where 1kb of memory is not significant.
-		    int n = read (tty_fd0, buf, sizeof buf);  // read up to 100 characters if ready to read
-		    if (n>0) {
-			for (int count = 0; count <=n ; count++ ){
-			    cout << buf[count];
-			    cout.flush();
-		        }
+		char buf [1024]; //way more than enough, but we're on a laptop, where 1kb of memory is not significant.
+		int n = read (tty_fd0, buf, sizeof buf);  // read up to 100 characters if ready to read
+		if (n>0) {
+		    for (int count = 0; count <=n ; count++ ){
+			cout << buf[count];
+			cout.flush();
 		    }
-		//}
-
+		}
 
 		//visualization
 		int nValidDetections=0;
@@ -529,6 +509,8 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			cv::circle(frame, cv::Point2d(dd.p[0][0],dd.p[0][1]), 3, helper::CV_GREEN, 2);
 		}
 
+		clock_gettime(CLOCK_REALTIME,&check); //check the time
+
 		//logging results
 		if(nValidDetections>0 /*&& (doLog || (isPhoto && useEachValidPhoto) || (!isPhoto && doRecord))*/) {
 			doLog=false;
@@ -536,16 +518,17 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			std::string fileid = helper::num2str(cnt, 5);
 
 
-			//because we kept crashing, suspected spamming the port too fast, let's sloooow down with a sample rate limiting timer
-			//should we do something more clever, dynamically change the sampling rate? ...probably not.
-			if( ( (double)(std::clock() - last)/ (double)CLOCKS_PER_SEC ) > 0.01) { //value of unit is seconds
-				last = std::clock();			
-				for(int i=0,j=0; i<(int)detections.size(); ++i) {
-					TagDetection &dd = detections[i];
-					if(dd.hammingDistance>this->hammingThresh) continue;
-						++j;//note matlab uses 1-based index
-						writeData(dd, "tag", !this->undistortImage && !this->no_distortion);
-					}
+			//throttle the frequency with which we send updates to the serial (via method writeData)
+			//by changing timeval to be the wait period desired between writes. Full speed isn't always a problem (depends on various factors)
+			diff = (check.tv_sec - start.tv_sec)*1000 + double((check.tv_nsec - start.tv_nsec))/MILLION; //convert to seconds!!!
+			if( diff <= timeval) { //check to see if diff has elapsed. You can vary diff to suppress the output speed
+			    clock_gettime(CLOCK_REALTIME,&start); //reset timer	
+			    for(int i=0,j=0; i<(int)detections.size(); ++i) {
+				TagDetection &dd = detections[i];
+				if(dd.hammingDistance>this->hammingThresh) continue;
+				    ++j;//note matlab uses 1-based index
+				    writeData(dd, "tag", !this->undistortImage && !this->no_distortion);
+			    }
 			}		
 			++cnt;
 		}
@@ -624,8 +607,8 @@ int main(const int argc, const char **argv )
 	set_interface_attribs (tty_fd0, SPEED, 0);  // set speed, 8n1 (no parity)
 	set_blocking (tty_fd0, 0);                // set no blocking
 
-	last = std::clock(); //runs once, initializes value
-	last1 = std::clock();
+	clock_gettime(CLOCK_REALTIME,&start); //initialize clock
+	timeval=0;
 
 	ConfigHelper::Config& cfg = GConfig::Instance();
 	if(!cfg.autoLoad("AprilTagFinder.cfg",DirHelper::getFileDir(argv[0]))) {
