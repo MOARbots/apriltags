@@ -51,10 +51,8 @@ CONFIGURE_FILE(
   "${CMAKE_CURRENT_BINARY_DIR}/include/cv2cgConfig.h")
 INCLUDE_DIRECTORIES(
 	"${CMAKE_CURRENT_BINARY_DIR}/include"
-	"/Users/leonchu/data/code/cs799/opencv-2.4.9/modules/nonfree/include"
+        "~/OpenCV/opencv-2.4.9/modules/nonfree/include"
 )
-#lc
-# "~/OpenCV/opencv-2.4.9/modules/nonfree/include"
 
 ########### uninstall files ###############
 CONFIGURE_FILE(
@@ -70,6 +68,9 @@ include(${CMAKE_SOURCE_DIR}/cmake/AutoAppConfig.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AutoAddSubDir.cmake)
   
 ########### Subdirectories ###############
+#L.C.: audo add subdirectory is not supported crossplatform (ex:OSX)
+#  so manually add each project here.
+#  note: the StreamData project is still build break due to get time funciton.
 ADD_SUBDIRECTORY(application/AprilCalib)
 ADD_SUBDIRECTORY(application/AprilTagFinder)
 ADD_SUBDIRECTORY(application/AprilTagCreator)
