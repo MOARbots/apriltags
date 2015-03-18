@@ -60,6 +60,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <cstdlib>
+#include <time.h>
 
 #include "AllHelpers.h"
 #define TAG_DEBUG_PERFORMANCE 0
@@ -183,12 +184,12 @@ struct MarkerSet {
 		this->markerCorners.clear();
 		this->markerNames.clear();
 
-		int method=(int)cfn["optimizeMethod"];
+		int method=(int)cfn[std::string("optimizeMethod")];
 		this->optimizeMethod = (OPTMETHOD)method;
-		this->name = cfn["name"].str();
-		cfn["markerNames"] >> markerNames;
+		this->name = cfn[std::string("name")].str();
+		cfn[std::string("markerNames")] >> markerNames;
 		std::vector<double> pts;
-		cfn["markerCorners"] >> pts;
+		cfn[std::string("markerCorners")] >> pts;
 		assert(pts.size()==markerNames.size()*4*3);
 
 		cv::Mat(markerNames.size()*4, 3, CV_64FC1, &pts[0])
@@ -315,7 +316,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		ConfigHelper::Config& cfg = GConfig::Instance();
 		{
 			std::vector<double> K_;
-			if(!cfg->exist("K") || 9!=(cfg.getRoot()["K"]>>K_)) {
+			if(!cfg->exist(std::string("K")) || 9!=(cfg.getRoot()[std::string("K")]>>K_)) {
 				logli("[loadIntrinsics warn] calibration matrix K"
 					" not correctly specified in config!");
 				this->undistortImage=false;
@@ -328,7 +329,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 
 		{
 			std::vector<double> distCoeffs_(5,0);
-			if(!cfg->exist("distCoeffs") || 5!=(cfg.getRoot()["distCoeffs"]>>distCoeffs_)) {
+			if(!cfg->exist(std::string("distCoeffs")) || 5!=(cfg.getRoot()[std::string("distCoeffs")]>>distCoeffs_)) {
 				logli("[loadIntrinsics warn] distortion coefficients "
 					"distCoeffs not correctly specified in config! Assume all zero!");
 				for(int i=0; i<5; ++i) distCoeffs_[i]=0;
@@ -509,6 +510,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			cv::circle(frame, cv::Point2d(dd.p[0][0],dd.p[0][1]), 3, helper::CV_GREEN, 2);
 		}
 
+    //L.C: this is not supported by MacOSX and will caused build break!
 		clock_gettime(CLOCK_REALTIME,&check); //check the time
 
 		//logging results

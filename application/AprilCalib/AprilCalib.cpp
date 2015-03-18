@@ -110,10 +110,10 @@ struct CalibRig {
 		ConfigNode& cfn = *cfg;
 		
 		//get rig mode and start_id
-		std::string mode = cfn["mode"].str();
+		std::string mode = cfn[std::string("mode")].str();
 		this->isTag3d=(mode.compare("3d")==0);
 		std::vector<std::string> markerNames;
-		cfn["markerNames"] >> markerNames;
+		cfn[std::string("markerNames")] >> markerNames;
 
 		const int nTags=(int)markerNames.size();
 		if(nTags<8) {
@@ -121,7 +121,7 @@ struct CalibRig {
 			exit(-1);
 		}
 		std::vector<double> buf;
-		cfn["tagCenters"]>>buf;
+		cfn[std::string("tagCenters")]>>buf;
 		if( nTags*3 != (int)buf.size() ) {
 			logle("[CalibRig error] CalibRig:tagCenters invalid in Config!");
 			exit(-1);
