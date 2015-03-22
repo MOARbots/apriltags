@@ -9,18 +9,18 @@
   hereby granted, provided that the above copyright notice and
   the following paragraph appear in all copies.
 
-  THIS SOFTWARE IS PROVIDED BY THE UNIVERSITY OF MICHIGAN "AS IS" AND 
-  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
-  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR 
+  THIS SOFTWARE IS PROVIDED BY THE UNIVERSITY OF MICHIGAN "AS IS" AND
+  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
   PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE UNIVERSITY OF MICHIGAN
-  OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, 
-  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, 
-  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR 
-  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF 
+  OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS 
+  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-  
+
   Authors:
 
 			Chen Feng
@@ -32,7 +32,7 @@
 			Phone:    (734)764-8495
 			EMail:    simbaforrest@gmail.com
 			WWW site: http://www.umich.edu/~cforrest
-            
+
 			Vineet R. Kamat
             Laboratory for Interactive Visualization in Engineering (LIVE)
 			Department of Civil and Environmental Engineering
@@ -67,6 +67,7 @@
 #define TAG_DEBUG_DRAW 0
 #include "apriltag/apriltag.hpp"
 #include "apriltag/TagFamilyFactory.hpp"
+#include "PacketHelper.hpp"
 
 #define DEVICE0 "/dev/ttyACM0"
 #define DEVICE1 "/dev/ttyACM1"
@@ -405,7 +406,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 
 		return err;
 	}
-	
+
 	/**
 	write the detection in matlab script format:
 	tag.id <1x1>, tag.H <3x3>, tag.p <2x4>, tag.c <2x1> [tag.up <2x4>]
@@ -435,7 +436,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		//cout<<varname<<".up="<<cv::Mat(up).reshape(1)<<"';"<<std::endl;
 		//cout<<varname<<".uc="<<uc<<";"<<std::endl;
 
-		//Using uc.x, uc.y, the central coordinates, and up[0].x, up[0].y, one of the corner coordinates, we now compute the rotation 
+		//Using uc.x, uc.y, the central coordinates, and up[0].x, up[0].y, one of the corner coordinates, we now compute the rotation
 		float myX = up[0].x - uc.x;
 		float myY = up[0].y - uc.y;
 		float myR = 0;
@@ -447,11 +448,11 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		else if ((myX <0 && myY <0) || (myX <0 && myY >=0) ) {
 			if (myY == 0) { myY = 0.00001; }
 			if (myX == 0) { myX = 0.00001; }//just in case we ever get (un)lucky, don't divide by zero
-			myR = atan((myY/myX)) + M_PI;	
+			myR = atan((myY/myX)) + M_PI;
 		}
 		myR = myR +M_PI/2 + M_PI/4;
 		if (myR >2*M_PI){
-			myR = myR-2*M_PI;		
+			myR = myR-2*M_PI;
 		}
 
 		myR = myR * (180.00/M_PI);
@@ -465,26 +466,19 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		*	---------	9 bit rotation (max 512 rounded to the nearest degree in decimal)
 		*/
 
-		//Write the packet format. Not very reconfigurable yet. TODO: make this work with some defines.
-		uint8_t bytearray[5];
-		bytearray[0] = 63;
-		bytearray[0] = bytearray[0] << 2;
-		uint8_t IDint = dd.id;
-		bytearray[0] = bytearray[0] | IDint >> 3;
-		bytearray[1] = IDint << 5;
-		uint16_t Yint = uc.y;
-		bytearray[1] = bytearray[1] | ( (Yint >> 5) & (0x1F) ); //take myY bits 10 thru 6
-		bytearray[2] = Yint << 3; //take myY bits 5 thru 1
-		uint16_t Xint = uc.x;
-		bytearray[2] = bytearray[2] | ( (Xint >> 7) & (0x07) ); //take myX bits 10 thru 8
-		uint16_t myRint = myR;
-		bytearray[3] =  Xint << 1; //take myX bits 7 thru 1
-		bytearray[3] = bytearray[3] | ( (myRint >> 8) & 0x01 ); //take myRint bit 9
-		bytearray[4] = myRint; //take myRint bits 8 thru 1
+		//Packet construction found in PacketHelper.hpp
+		BinPacket message;
+		message.IDint = dd.id;
+		message.Yint = uc.y;
+		message.Xint = uc.x;
+		message.myRint = myR;
+		message.Build();
 
-		//This is where we concatenate and prepare message
-		finalmsg = reinterpret_cast <const char *> (bytearray); //does bytearray already point at first element in C?
-		
+		//This is where we truancate and prepare message
+		char *bytearray = reinterpret_cast<char*> (&message.packet); //does bytearray already point at first element in C?
+		char finalmsg[PACKET_LEN];
+		strncpy(finalmsg, bytearray, PACKET_LEN);
+
 		write(tty_fd0, finalmsg, 5);//This command pushes data to the wixel, if available
 		cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
 
@@ -540,14 +534,14 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			//by changing timeval to be the wait period desired between writes. Full speed isn't always a problem (depends on various factors)
 			diff = (check.tv_sec - start.tv_sec)*1000 + double((check.tv_nsec - start.tv_nsec))/MILLION; //convert to seconds!!!
 			if( diff <= timeval) { //check to see if diff has elapsed. You can vary diff to suppress the output speed
-			    clock_gettime(CLOCK_REALTIME,&start); //reset timer	
+			    clock_gettime(CLOCK_REALTIME,&start); //reset timer
 			    for(int i=0,j=0; i<(int)detections.size(); ++i) {
 				TagDetection &dd = detections[i];
 				if(dd.hammingDistance>this->hammingThresh) continue;
 				    ++j;//note matlab uses 1-based index
 				    writeData(dd, "tag", !this->undistortImage && !this->no_distortion);
 			    }
-			}		
+			}
 			++cnt;
 		}
 	}
@@ -555,12 +549,12 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 	void handle(char key) {
 		switch (key) {
 		case 'g': //Send a g command, for starting robots
-			pwmcommand = "\x67"; //send 'g'	
+			pwmcommand = "\x67"; //send 'g'
 			write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
 			cout << "Sent the start command, 'g', to the robot." << endl;
 			break;
 		case 'c': //Send a c command, for continuing robots
-			pwmcommand = "\x63"; //send 'c'	
+			pwmcommand = "\x63"; //send 'c'
 			write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
 			cout << "Sent the continue command, 'c', to the robot." << endl;
 			break;
