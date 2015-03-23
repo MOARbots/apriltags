@@ -23,3 +23,23 @@ for installation instructions (MOARbots help guide)
 	
 3. Usage
 	AprilTagFinder camera://0
+
+
+#===========================================
+# FOR MacOSX User:
+
+1. Install dependency libraries from Mac Port
+sudo port install pkgconfig eigen3 cmake
+
+2. Install OpenCV (http://opencv.org/downloads.html)
+ - Use cmake and make to successfully build it
+ - Set environment variable CMAKE_PREFIX_PATH in ~/.bash_profile to 
+   point out where your OpenCVConfig.cmake locates, which should be in opencv folder
+   e.g.:
+     export CMAKE_PREFIX_PATH="/Users/luncheng/data/code/cs799/opencv-2.4.9"
+
+3. Install AprilTag
+ - follow the guide above
+
+
+
