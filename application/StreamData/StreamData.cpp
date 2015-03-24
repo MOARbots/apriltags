@@ -68,8 +68,16 @@
 #include "apriltag/apriltag.hpp"
 #include "apriltag/TagFamilyFactory.hpp"
 
-#define DEVICE0 "/dev/ttyACM0"
-#define DEVICE1 "/dev/ttyACM1"
+#ifdef __MACH__
+//L.C.: in my MacAir, the wixel device name is cu.usbmodem1421
+//      you may need to change it if you have different name.
+ #define DEVICE0 "/dev/cu.usbmodem1421"
+ #define DEVICE1 "/dev/ttyACM1"
+
+#else
+ #define DEVICE0 "/dev/ttyACM0"
+ #define DEVICE1 "/dev/ttyACM1"
+#endif
 //Device 1 is for debug only
 #define SPEED B9600
 #define MILLION 1000000L
@@ -617,7 +625,9 @@ int main(const int argc, const char **argv )
 		}
 	}
 
-	tty_fd0 = open (DEVICE0, O_RDWR | O_NOCTTY | O_SYNC);
+	tty_fd0 = open (DEVICE0, O_RDWR | O_NOCTTY | O_SYNC);//| O_NOCTTY | O_SYNC
+  printf("\nOpen Devcie %s\n", DEVICE0);
+
 	fcntl(tty_fd0, F_SETFL, FNDELAY); //necessary for immediate return on read functions
 	if (tty_fd0 < 0) {
             printf ("error %d opening %s: %s", errno, DEVICE0, strerror (errno));
