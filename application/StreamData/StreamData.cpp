@@ -69,9 +69,9 @@
 #include "apriltag/TagFamilyFactory.hpp"
 
 #ifdef __MACH__
-//L.C.: in my MacAir, the wixel device name is cu.usbmodem1421
+//L.C.: in my MacAir, the wixel device name is cu.usbmodem1411
 //      you may need to change it if you have different name.
- #define DEVICE0 "/dev/cu.usbmodem1421"
+ #define DEVICE0 "/dev/cu.usbmodem1411"
  #define DEVICE1 "/dev/ttyACM1"
 
 #else
@@ -426,6 +426,8 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		const cv::Mat p(4,2,CV_64FC1,(void*)dd.p[0]);
 		const cv::Mat c(2,1,CV_64FC1,(void*)dd.cxy);
 
+    cout<<"TEST\n";
+
 		//cout<<varname<<".id="<<dd.id<<";\n";
 			//<<varname<<".hammingDistance="<<dd.hammingDistance<<";\n"
 			//<<varname<<".familyName='"<<dd.familyName<<"';\n"
@@ -547,6 +549,14 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			//throttle the frequency with which we send updates to the serial (via method writeData)
 			//by changing timeval to be the wait period desired between writes. Full speed isn't always a problem (depends on various factors)
 			diff = (check.tv_sec - start.tv_sec)*1000 + double((check.tv_nsec - start.tv_nsec))/MILLION; //convert to seconds!!!
+
+#ifdef __MACH__
+      //L.C.: Manually reset timeval to make it work. 
+      //      Need to figure out what's wrong here; the timeval is zero below, the cause could be .cfg file?
+      //printf("L.C. Test: %d \n", diff);
+      timeval = 8000;
+#endif
+
 			if( diff <= timeval) { //check to see if diff has elapsed. You can vary diff to suppress the output speed
 			    clock_gettime(CLOCK_REALTIME,&start); //reset timer	
 			    for(int i=0,j=0; i<(int)detections.size(); ++i) {
@@ -625,12 +635,14 @@ int main(const int argc, const char **argv )
 		}
 	}
 
-	tty_fd0 = open (DEVICE0, O_RDWR | O_NOCTTY | O_SYNC);//| O_NOCTTY | O_SYNC
+	//tty_fd0 = open (DEVICE0, O_RDWR | O_NOCTTY | O_SYNC );//| O_NOCTTY | O_SYNC
+	tty_fd0 = open (DEVICE0, O_CREAT|O_WRONLY, 0777);//| O_NOCTTY | O_SYNC
   printf("\nOpen Devcie %s\n", DEVICE0);
 
 	fcntl(tty_fd0, F_SETFL, FNDELAY); //necessary for immediate return on read functions
+	//fcntl(tty_fd0, F_SETFL); //necessary for immediate return on read functions
 	if (tty_fd0 < 0) {
-            printf ("error %d opening %s: %s", errno, DEVICE0, strerror (errno));
+            printf ("error %d opening %s: %s\n", errno, DEVICE0, strerror (errno));
 	}
 	set_interface_attribs (tty_fd0, SPEED, 0);  // set speed, 8n1 (no parity)
 	set_blocking (tty_fd0, 0);                // set no blocking

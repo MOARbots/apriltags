@@ -35,11 +35,40 @@ sudo port install pkgconfig eigen3 cmake
  - Use cmake and make to successfully build it
  - Set environment variable CMAKE_PREFIX_PATH in ~/.bash_profile to 
    point out where your OpenCVConfig.cmake locates, which should be in opencv folder
-   e.g.:
+   Command:
      export CMAKE_PREFIX_PATH="/Users/luncheng/data/code/cs799/opencv-2.4.9"
 
 3. Install AprilTag
- - follow the guide above
+   Assume you are within apriltags folder, then
+   Command:
+     mkdir build
+     cd build
+     cmake ..
+
+4. Find your Wixel device name in /dev
+   Command:
+     cd /dev
+
+5. Update your Wixel device name in c code, which is in ./application/StreamData/StreamData.cpp.
+   In line 74, update the DEVICE0, which by default is /dev/cd.usbmodel1411.
+
+6. Go back to apriltags/build folder, then
+   Command:
+     make
+     sudo make install
+   
+7. Execute the program
+ - Plug in your wixel, and make sure the device name is the same as the one you type in in Stream.cpp
+ - Go to applicaiton folder apriltags/build/applicaitons/StreamData
+ - Copy configure file to this folder. 
+   The configure file "AprilTagFinder.cfg", which by default is in apriltags/applications/StreamData
+ - Execute the program
+   Command:
+     ./StreamData
+
+8. Good Luck
 
 
+ L.C.
+ lc@cs.wisc.edu
 
