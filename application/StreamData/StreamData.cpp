@@ -53,7 +53,6 @@
 #include <math.h>
 #include <ctime>
 #include <iomanip>
-#include <time.h>
 #include <errno.h>
 #include "/usr/include/fcntl.h"
 #include <termios.h>
@@ -98,17 +97,17 @@ cv::Ptr<TagDetector> gDetector;
 
 //L.C. a bandit to get this build
 #ifdef __MACH__
-#include <sys/time.h>
-//clock_gettime is not implemented on OSX
-#define CLOCK_REALTIME 0
-int clock_gettime(int /*clk_id*/, struct timespec* t) {
-  struct timeval now;
-  int rv = gettimeofday(&now, NULL);
-  if (rv) return rv;
-  t->tv_sec  = now.tv_sec;
-  t->tv_nsec = now.tv_usec * 1000;
-  return 0;
-}
+	#include <sys/time.h>
+	//clock_gettime is not implemented on OSX
+	#define CLOCK_REALTIME 0
+	int clock_gettime(int /*clk_id*/, struct timespec* t) {
+  		struct timeval now;
+  		int rv = gettimeofday(&now, NULL);
+  		if (rv) return rv;
+  		t->tv_sec  = now.tv_sec;
+  		t->tv_nsec = now.tv_usec * 1000;
+  		return 0;
+	}
 #endif
 
 //clock constants
@@ -120,6 +119,7 @@ struct termios tio;
 struct termios stdio;
 struct termios old_stdio;
 int tty_fd0, tty_fd1;
+bool send_write_error_msg = 1;
 
 int set_interface_attribs (int fd, int speed, int parity)
 {
@@ -426,8 +426,6 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		const cv::Mat p(4,2,CV_64FC1,(void*)dd.p[0]);
 		const cv::Mat c(2,1,CV_64FC1,(void*)dd.cxy);
 
-    cout<<"TEST\n";
-
 		//cout<<varname<<".id="<<dd.id<<";\n";
 			//<<varname<<".hammingDistance="<<dd.hammingDistance<<";\n"
 			//<<varname<<".familyName='"<<dd.familyName<<"';\n"
@@ -492,12 +490,22 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		bytearray[3] = bytearray[3] | ( (myRint >> 8) & 0x01 ); //take myRint bit 9
 		bytearray[4] = myRint; //take myRint bits 8 thru 1
 
-		//This is where we concatenate and prepare message
 		finalmsg = reinterpret_cast <const char *> (bytearray); //does bytearray already point at first element in C?
-		
-		write(tty_fd0, finalmsg, 5);//This command pushes data to the wixel, if available
-		cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
+		if (write(tty_fd0, finalmsg, 5)==-1){ //try to write to the wixel
+		    if (send_write_error_msg == 1) { //only send the error message if first time
+		    	cout << "Serial write fail" << endl;
+			send_write_error_msg = 0;
+		    }
+		}
+		else {
+		    if (send_write_error_msg == 0) {
+		    	cout << "Serial write resumed." << endl; send_write_error_msg = 1;
+			send_write_error_msg = 1;
+		    }
+		}
 
+		//Suppress in order to view input (robot debug data sentback via radio). Ideally, have a utility that showed each stream separately.
+		//cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
 	}
 
 /////// Override
@@ -545,7 +553,6 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			static int cnt=0;
 			std::string fileid = helper::num2str(cnt, 5);
 
-
 			//throttle the frequency with which we send updates to the serial (via method writeData)
 			//by changing timeval to be the wait period desired between writes. Full speed isn't always a problem (depends on various factors)
 			diff = (check.tv_sec - start.tv_sec)*1000 + double((check.tv_nsec - start.tv_nsec))/MILLION; //convert to seconds!!!
@@ -554,10 +561,12 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
       //L.C.: Manually reset timeval to make it work. 
       //      Need to figure out what's wrong here; the timeval is zero below, the cause could be .cfg file?
       //printf("L.C. Test: %d \n", diff);
-      timeval = 8000;
+
+      timeval = 75;
+
 #endif
 
-			if( diff <= timeval) { //check to see if diff has elapsed. You can vary diff to suppress the output speed
+			if( diff >= timeval) { //check to see if diff has elapsed. You can vary diff to suppress the output speed
 			    clock_gettime(CLOCK_REALTIME,&start); //reset timer	
 			    for(int i=0,j=0; i<(int)detections.size(); ++i) {
 				TagDetection &dd = detections[i];
@@ -574,31 +583,24 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		switch (key) {
 		case 'g': //Send a g command, for starting robots
 			pwmcommand = "\x67"; //send 'g'	
-			write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
+			if ( write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str())) ==-1){ cout << "Serial write fail" << endl; }
 			cout << "Sent the start command, 'g', to the robot." << endl;
+			break;
+		case 'd': //Send a d command
+			pwmcommand = "\x64"; //send 'd'	
+			if ( write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str())) ==-1){ cout << "Serial write fail" << endl; }
+			cout << "Sent the start command, 'd', to the robot." << endl;
 			break;
 		case 'c': //Send a c command, for continuing robots
 			pwmcommand = "\x63"; //send 'c'	
-			write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str()));
+			if ( write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str())) ==-1){ cout << "Serial write fail" << endl; }
 			cout << "Sent the continue command, 'c', to the robot." << endl;
 			break;
-		case 'd':
-			gDetector->segDecimate = !(gDetector->segDecimate);
-			logli("[ProcessVideo] gDetector.segDecimate="<<gDetector->segDecimate); break;
-		case 'l':
-			doLog=true; break;
-		case 'r':
-			doRecord=true; break;
-		case '1':
-			LogHelper::GLogControl::Instance().level = LogHelper::LOG_DEBUG; break;
-		case '2':
-			LogHelper::GLogControl::Instance().level = LogHelper::LOG_INFO; break;
-		case 'h':
-			cout<<"d: segDecimate\n"
-				"l: do log\n"
-				"r: do record\n"
-				"1: debug output\n"
-				"2: info output\n"<<endl; break;
+		case 'f':
+			pwmcommand = "\x66"; //send 'f'
+			if ( write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str())) ==-1){ cout << "Serial write fail" << endl; }
+			cout << "Sent the start command, 'f', to the robot." << endl;
+			break;
 		}
 	}
 
@@ -635,10 +637,13 @@ int main(const int argc, const char **argv )
 		}
 	}
 
-	//tty_fd0 = open (DEVICE0, O_RDWR | O_NOCTTY | O_SYNC );//| O_NOCTTY | O_SYNC
-	tty_fd0 = open (DEVICE0, O_CREAT|O_WRONLY, 0777);//| O_NOCTTY | O_SYNC
-  printf("\nOpen Devcie %s\n", DEVICE0);
-
+#ifdef __MACH__
+	tty_fd0 = open (DEVICE0, O_CREAT|O_WRONLY, 0777);
+#else
+	tty_fd0 = open (DEVICE0, O_RDWR | O_NOCTTY | O_SYNC );
+#endif
+	
+	printf("\nOpen Device %s\n", DEVICE0);
 	fcntl(tty_fd0, F_SETFL, FNDELAY); //necessary for immediate return on read functions
 	//fcntl(tty_fd0, F_SETFL); //necessary for immediate return on read functions
 	if (tty_fd0 < 0) {
@@ -648,7 +653,7 @@ int main(const int argc, const char **argv )
 	set_blocking (tty_fd0, 0);                // set no blocking
 
 	clock_gettime(CLOCK_REALTIME,&start); //initialize clock
-	timeval=0;
+	timeval=75;
 
 	ConfigHelper::Config& cfg = GConfig::Instance();
 	if(!cfg.autoLoad("AprilTagFinder.cfg",DirHelper::getFileDir(argv[0]))) {
