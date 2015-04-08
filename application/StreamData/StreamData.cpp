@@ -81,6 +81,9 @@
 #define SPEED B9600
 #define MILLION 1000000L
 
+//Because AprilTags is computed tags near the border as centered at negative coords
+#define OFFSET 25
+
 using namespace std;
 using namespace cv;
 using april::tag::UINT64;
@@ -480,10 +483,10 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		uint8_t IDint = dd.id;
 		bytearray[0] = bytearray[0] | IDint >> 3;
 		bytearray[1] = IDint << 5;
-		uint16_t Yint = uc.y;
+		uint16_t Yint = uc.y+OFFSET;
 		bytearray[1] = bytearray[1] | ( (Yint >> 5) & (0x1F) ); //take myY bits 10 thru 6
 		bytearray[2] = Yint << 3; //take myY bits 5 thru 1
-		uint16_t Xint = uc.x;
+		uint16_t Xint = uc.x+OFFSET;
 		bytearray[2] = bytearray[2] | ( (Xint >> 7) & (0x07) ); //take myX bits 10 thru 8
 		uint16_t myRint = myR;
 		bytearray[3] =  Xint << 1; //take myX bits 7 thru 1
@@ -505,7 +508,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		}
 
 		//Suppress in order to view input (robot debug data sentback via radio). Ideally, have a utility that showed each stream separately.
-		//cout << "ID: " << dd.id << ", X: " << uc.x << ", Y: " << uc.y << ", R: " << myR << endl;
+		//cout << "ID: " << dd.id << ", X: " << (uc.x+OFFSET) << ", Y: " << (uc.y+OFFSET) << ", R: " << myR << endl;
 	}
 
 /////// Override
