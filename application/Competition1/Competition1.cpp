@@ -85,6 +85,7 @@
 #define OFFSET 25
 
 #define NUM_WAYPOINTS 5
+#define VISIT_RADIUS 50
 
 using namespace std;
 using namespace cv;
@@ -116,12 +117,14 @@ cv::Ptr<TagDetector> gDetector;
 
 //waypoint competition stuff
 ofstream myfile;
-bool trialstart = 0;
-bool waypointsfound = 0;
-int robotID = 255;
-int waypointIDs[NUM_WAYPOINTS] = {0};
-int waypointcount = 0;
-cv::Point2d waypoints[NUM_WAYPOINTS];
+bool trialstart = 0; //flag indicates if the trial has started
+bool waypointsfound = 0; //flag indicates if the app found all the waypoints expected
+bool trialend = 0; //flag indicates if the trial successfully ended due to timeout, found all, or robot called for end condition
+int robotID = 255; //input by user at beginning of program
+int waypointIDs[NUM_WAYPOINTS] = {0}; //stores the IDs of the waypoints
+int waypointcount = 0; //counts how many waypoints were found by the app, then later by the robot
+cv::Point2d waypoints[NUM_WAYPOINTS]; //stores the X,Y coords of waypoints
+bool waypointIDsfound[NUM_WAYPOINTS] = {0}; //indicates whether each waypoint was reached by robot
 
 //clock constants
 struct timespec start, check, end;
@@ -530,6 +533,24 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			    myfile << "\t\t" << dd.id << "\t" << uc.x << "\t" << uc.y << "\t" << myR << endl; } //we'll close it when the time elapses
 			}
 			#endif
+
+			if (dd.id == robotID && trialstart) { //during the trial check to see if robot was at a waypoint
+			    for (int a = 0; a < NUM_WAYPOINTS; a++) { //check against all known points
+				if ( (abs(waypoints[a].x-uc.x) <= VISIT_RADIUS ) && (abs(waypoints[a].y-uc.y) <= VISIT_RADIUS ) ) {
+				    if (!waypointIDsfound[a]) {
+					waypointIDsfound[a] = 1;
+				    	cout << "Robot reached waypoint " << waypointIDs[a] << endl;
+					waypointcount++;
+					if (waypointcount >=5) { //all waypoints have been reached
+					    cout << "Robot reached all waypoints; ending trial." << endl;
+					    trialend = 1; //might not be needed?
+					    myfile.close();
+					    exit(0);
+					}
+				    }
+				}
+			    }
+			}
 		}
 
 		else if (!trialstart) { //trial has not started, check against robotID and known waypoints, update or add to list
@@ -545,7 +566,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 				waypoints[waypointcount] = uc; //add it at position waypointcount
 				waypointIDs[waypointcount] = dd.id;
 				waypointcount++;
-				cout << "Found: " << dd.id << endl;
+				cout << "Camera identified wayoint " << dd.id << endl;
 				if (waypointcount >= NUM_WAYPOINTS) { waypointsfound = 1; } //set flag to indicate all waypoints have been found
 			    }
 			}
@@ -620,6 +641,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			    else if (waypointsfound) {
 				cout << "Sent the start command, 'g', to the robot. Trial begins now." << endl;
 			   	trialstart = 1;
+				waypointcount = 0;
 			    }
 			}
 			break;
