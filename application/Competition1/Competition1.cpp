@@ -1,43 +1,5 @@
 /************************************************************************\
 
-UW COMPSCI USE NOTES
-
-This version is for collecting rotation data.
-
-Usage: create a text file with one trial entry on each line
-The format is:
-RobotID Left/Right PWM time(milliseconds) #trials
-
-For example
-
-E L 255 2400 3
-E R 255 240 2
-D R 203 500 1
-
-This must be in a file called trials.txt, in the directory where the
-executable app is created.
-
-The trial begins when the robot is first observed successfully.
-
-The trial data will be saved to a file with convention similar to
-the one seen above. The files outputted from the example:
-
-E-L-255-2400-1
-E-L-255-2400-2
-E-L-255-240-3
-E-R-255-240-1
-E-L-255-240-2
-D-R-203-500-1
-
-Data reported: the time stamp in milliseconds
-followed by the ID, X position, Y position, and Rotation (degrees)
-all data is tab separated and there is no column header (first line is first data point)
-
-In order for the robot to have the PWM settable, you need the lastest
-version of the wireless_robot_serial.
-
-
-copyright info for apriltags:
   Copyright 2011 The University of Michigan.
   All Rights Reserved.
 
@@ -85,26 +47,19 @@ copyright info for apriltags:
 
 #include <iostream>
 #include <string>
-#include <fstream>
-#include <sstream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <cmath>
 #include <math.h>
 #include <ctime>
 #include <iomanip>
-#include <time.h>
-#include <math.h>
-
-
+#include <errno.h>
 #include "/usr/include/fcntl.h"
 #include <termios.h>
 #include <sys/ioctl.h>
-
-//#include "serial.h"
-
 #include <unistd.h>
 #include <cstdlib>
+#include <time.h>
 
 #include "AllHelpers.h"
 #define TAG_DEBUG_PERFORMANCE 0
@@ -112,11 +67,24 @@ copyright info for apriltags:
 #include "apriltag/apriltag.hpp"
 #include "apriltag/TagFamilyFactory.hpp"
 
-#define DEVICE "/dev/ttyACM0"
+#ifdef __MACH__
+//L.C.: in my MacAir, the wixel device name is cu.usbmodem1411
+//      you may need to change it if you have different name.
+ #define DEVICE0 "/dev/cu.usbmodem1411"
+ #define DEVICE1 "/dev/ttyACM1"
+
+#else
+ #define DEVICE0 "/dev/ttyACM0"
+ #define DEVICE1 "/dev/ttyACM1"
+#endif
+//Device 1 is for debug only
 #define SPEED B9600
-#define STOPTIME 500
-//^ STOPTIME in milliseconds
 #define MILLION 1000000L
+
+//Because AprilTags is computed tags near the border as centered at negative coords
+#define OFFSET 25
+
+#define NUM_WAYPOINTS 5
 
 using namespace std;
 using namespace cv;
@@ -133,50 +101,98 @@ cv::Ptr<TagDetector> gDetector;
 
 //L.C. a bandit to get this build
 #ifdef __MACH__
-#include <sys/time.h>
-//clock_gettime is not implemented on OSX
-#define CLOCK_REALTIME 0
-int clock_gettime(int /*clk_id*/, struct timespec* t) {
-  struct timeval now;
-  int rv = gettimeofday(&now, NULL);
-  if (rv) return rv;
-  t->tv_sec  = now.tv_sec;
-  t->tv_nsec = now.tv_usec * 1000;
-  return 0;
-}
+	#include <sys/time.h>
+	//clock_gettime is not implemented on OSX
+	#define CLOCK_REALTIME 0
+	int clock_gettime(int /*clk_id*/, struct timespec* t) {
+  		struct timeval now;
+  		int rv = gettimeofday(&now, NULL);
+  		if (rv) return rv;
+  		t->tv_sec  = now.tv_sec;
+  		t->tv_nsec = now.tv_usec * 1000;
+  		return 0;
+	}
 #endif
 
+//waypoint competition stuff
+ofstream myfile;
+bool trialstart = 0;
+bool waypointsfound = 0;
+int robotID = 255;
+int waypointIDs[NUM_WAYPOINTS] = {0};
+int waypointcount = 0;
+cv::Point2d waypoints[NUM_WAYPOINTS];
 
 //clock constants
-float trialtime;
-struct timespec start;
-struct timespec end;
-struct timespec check;
-uint32_t diff;
-bool firsttimeflag = true; //a flag to signify that we are entering the record a data point step for the first time, so we should start the clock here
-bool firstmovecommand = true; //a flag to signify this is the first time we send the move command, to avoid unecessary reptition of sending
-bool firststopcommand = true; //a flag to signify this is the first time we send the stop command, to avoid unecessary reptition of sending
-
-//I know, global variables everywhere, not good practice.
-char robotID;
-char leftright;
-uint8_t PWMval;
-uint32_t timeval;
-int trialnums;
-int iterationnum;
+struct timespec start, check, end;
+uint32_t diff, timeval;
 
 //serial stuff
 struct termios tio;
 struct termios stdio;
 struct termios old_stdio;
-int tty_fd;
-int res, n, res2, read1, wri;
-char buf[255];
-char buf2[255];
+int tty_fd0, tty_fd1;
+bool send_write_error_msg = 1;
 
-ofstream myfile;
-ifstream trialsfile;
-string filename;
+int set_interface_attribs (int fd, int speed, int parity)
+{
+        struct termios tty;
+        memset (&tty, 0, sizeof tty);
+        if (tcgetattr (fd, &tty) != 0)
+        {
+                printf ("error %d from tcgetattr", errno);
+                return -1;
+        }
+
+        cfsetospeed (&tty, speed);
+        cfsetispeed (&tty, speed);
+
+        tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8-bit chars
+        // disable IGNBRK for mismatched speed tests; otherwise receive break
+        // as \000 chars
+        tty.c_iflag &= ~IGNBRK;         // disable break processing
+        tty.c_lflag = 0;                // no signaling chars, no echo,
+                                        // no canonical processing
+        tty.c_oflag = 0;                // no remapping, no delays
+        tty.c_cc[VMIN]  = 0;            // read doesn't block
+        tty.c_cc[VTIME] = 0;            // VMIN=0, VTIME=0 'nonblocking' case, returns # byte available
+
+        tty.c_iflag &= ~(IXON | IXOFF | IXANY); // shut off xon/xoff ctrl
+
+        tty.c_cflag |= (CLOCAL | CREAD);// ignore modem controls,
+                                        // enable reading
+        tty.c_cflag &= ~(PARENB | PARODD);      // shut off parity
+        tty.c_cflag |= parity;
+        tty.c_cflag &= ~CSTOPB;
+        tty.c_cflag &= ~CRTSCTS;
+
+        if (tcsetattr (fd, TCSANOW, &tty) != 0)
+        {
+                printf ("error %d from tcsetattr", errno);
+                return -1;
+        }
+        return 0;
+}
+
+void set_blocking (int fd, int should_block)
+{
+        struct termios tty;
+        memset (&tty, 0, sizeof tty);
+        if (tcgetattr (fd, &tty) != 0)
+        {
+                printf("error %d from tggetattr", errno);
+                return;
+        }
+
+        tty.c_cc[VMIN]  = should_block ? 1 : 0;
+        tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
+
+        if (tcsetattr (fd, TCSANOW, &tty) != 0)
+                printf ("error %d setting term attributes", errno);
+}
+
+
+
 
 template <typename T>
 std::string to_string(T value)
@@ -184,54 +200,6 @@ std::string to_string(T value)
 	std::ostringstream os ;
 	os << value ;
 	return os.str() ;
-}
-
-
-void trialinit () {
-	string store; //temp storage for input
-
-	if (!getline(trialsfile, store,' ')) { cout << "Input file end (or error)." << endl; exit(1);}
-	robotID = store.at(0); //Robot ID
-	if (!getline(trialsfile, store,' ')) { cout << "Input file end (or error)." << endl; exit(1);}
-	leftright = store.at(0); //Direction (left or right)
-	filename = robotID;
-	filename = filename + "-";
-	filename = filename + leftright;
-	filename = filename + "-"; 
-	if (!getline(trialsfile, store,' ')) { cout << "Input file end (or error)." << endl; exit(1);}
-	PWMval = atoi(store.c_str()) ; //PWM (0-255)
-	filename = filename + store + "-";
-	if (!getline(trialsfile, store,' ')) { cout << "Input file end (or error)." << endl; exit(1);}
-	timeval = atof(store.c_str()) ; //number milliseconds
-	filename = filename + store + "-";
-	if (!getline(trialsfile, store)) { cout << "Input file end (or error)." << endl; exit(1);}
-	trialnums = atoi(store.c_str()) ; //Iterations
-
-	iterationnum = 1;
-	store = filename + to_string(iterationnum) + ".txt";
-	myfile.open(store.c_str());
-	if (!myfile) { cout << "Failure to open file." << endl; exit(1);}
-
-	stringstream ss;
-	string pwmcommand;
-
-	//if (PWMval ==0 ) { PWMval = 1; cout << "This code cannot send a PWM value of zero. Sending value 1 instead." << endl; }
-	ss << hex << to_string(PWMval);	
-	string test = ss.str();	
-	
-	pwmcommand = "\x70"; //send 'p'	
-
-	write(tty_fd,pwmcommand.c_str(),1);
-
-	write(tty_fd,test.c_str(),1);
-
-	cout << store << endl;
-
-	myfile << "t\t\tID\tX\tY\tR\t" << endl;
-
-	firsttimeflag = true;
-	clock_gettime(CLOCK_REALTIME,&start);
-	//read and store current line of trial data
 }
 
 //A set of markers to be used for camera pose optimization
@@ -334,9 +302,8 @@ struct MarkerSet {
 
 const char * finalmsg;
 std::string message;
-
-unsigned nn;
-int f;
+string pwmcommand;
+unsigned char c;
 
 struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 	double tagTextScale;
@@ -413,7 +380,6 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 
 		logli("[loadIntrinsics] K="<<K);
 		logli("[loadIntrinsics] distCoeffs="<<distCoeffs);
-
 	}
 
 	/**
@@ -473,23 +439,15 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		const cv::Mat p(4,2,CV_64FC1,(void*)dd.p[0]);
 		const cv::Mat c(2,1,CV_64FC1,(void*)dd.cxy);
 
-		//cout<<varname<<".id="<<dd.id<<";\n";
-			//<<varname<<".hammingDistance="<<dd.hammingDistance<<";\n"
-			//<<varname<<".familyName='"<<dd.familyName<<"';\n"
-			//<<varname<<".H="<<H<<";\n"
-			//<<varname<<".p="<<p<<"';\n"
-			//<<varname<<".c="<<c<<";"<<std::endl;
-
 		if(!ud) return;
 
 		cv::Mat uH(3,3,CV_64FC1);
 		std::vector<cv::Point2d> up;
 		cv::Point2d uc;
 		dd.undistort<double>(this->K, this->distCoeffs, up, uc, uH);
-		//cout<<varname<<".uH="<<uH<<"';"<<std::endl;
-		//cout<<varname<<".up="<<cv::Mat(up).reshape(1)<<"';"<<std::endl;
-		//cout<<varname<<".uc="<<uc<<";"<<std::endl;
 
+		uc.y = uc.y+OFFSET;
+		uc.x = uc.x+OFFSET;
 		//Using uc.x, uc.y, the central coordinates, and up[0].x, up[0].y, one of the corner coordinates, we now compute the rotation 
 		float myX = up[0].x - uc.x;
 		float myY = up[0].y - uc.y;
@@ -512,32 +470,89 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		myR = myR * (180.00/M_PI);
 		myR = 360-myR;
 
-		if (firsttimeflag) {
-			clock_gettime(CLOCK_REALTIME,&start); //so that start time is as close as possible to first data point
-			firsttimeflag = false;
+		if( diff >= timeval) { //this section throttled by limiting execution to every timeval interval
+		    	clock_gettime(CLOCK_REALTIME,&start); //reset start time	
+
+			/*	We construct the message according to the format
+			*	111111		6 bit header, pads out total message size to a round number of bytes
+			*	-----		5 bit ID (max 32 decimal)
+			*	----------	10 bit y position (max 1023 rounded to the nearest pixel in decimal)
+			*	----------	10 bit x position (max 1023 rounded to the nearest pixel in decimal)
+			*	---------	9 bit rotation (max 512 rounded to the nearest degree in decimal)
+			*/
+
+			//Write the packet format. Not very reconfigurable yet. TODO: make this work with some defines.
+			uint8_t bytearray[5];
+			bytearray[0] = 63;
+			bytearray[0] = bytearray[0] << 2;
+			uint8_t IDint = dd.id;
+			bytearray[0] = bytearray[0] | IDint >> 3;
+			bytearray[1] = IDint << 5;
+			uint16_t Yint = uc.y;
+			bytearray[1] = bytearray[1] | ( (Yint >> 5) & (0x1F) ); //take myY bits 10 thru 6
+			bytearray[2] = Yint << 3; //take myY bits 5 thru 1
+			uint16_t Xint = uc.x;
+			bytearray[2] = bytearray[2] | ( (Xint >> 7) & (0x07) ); //take myX bits 10 thru 8
+			uint16_t myRint = myR;
+			bytearray[3] =  Xint << 1; //take myX bits 7 thru 1
+			bytearray[3] = bytearray[3] | ( (myRint >> 8) & 0x01 ); //take myRint bit 9
+			bytearray[4] = myRint; //take myRint bits 8 thru 1
+
+			finalmsg = reinterpret_cast <const char *> (bytearray); //does bytearray already point at first element in C?
+			if (write(tty_fd0, finalmsg, 5)==-1){ //try to write to the wixel
+			    if (send_write_error_msg == 1) { //only send the error message if first time
+			    	cout << "Serial write fail" << endl;
+				send_write_error_msg = 0;
+			    }
+			}
+			else {
+			    if (send_write_error_msg == 0) {
+			    	cout << "Serial write resumed." << endl; send_write_error_msg = 1;
+				send_write_error_msg = 1;
+			    }
+			}
+		} //end of timeval throttled section
+
+		if (trialstart) { //if the trial is underway, write to the output file
+			#ifndef __MACH__
+    			if (myfile.is_open()) {
+      			    clock_gettime(CLOCK_REALTIME,&end);
+     		 	    myfile <<((end.tv_sec-start.tv_sec)); //seconds
+  			    myfile << setfill('0') << setw(3) << double(abs(end.tv_nsec)/1000000L); //milliseconds, format example 4300 means 4.3 seconds
+      			    myfile << "\t\t" << dd.id << "\t" << uc.x << "\t" << uc.y << "\t" << myR << endl; 
+    			} //we'll close it when the time elapses
+			#else
+			//default linux version
+			if (myfile.is_open()) {
+			    clock_gettime(CLOCK_REALTIME,&end);
+			    myfile <<((end.tv_sec-start.tv_sec)); //seconds
+			    myfile << setfill('0') << setw(3) << double(abs(end.tv_nsec)/1000000L); //milliseconds, format example 4300 means 4.3 seconds
+			    myfile << "\t\t" << dd.id << "\t" << uc.x << "\t" << uc.y << "\t" << myR << endl; } //we'll close it when the time elapses
+			}
+			#endif
 		}
 
-    //This is where we put the updates into the file rotationlog.txt
-
-#ifndef __MACH__
-    if (myfile.is_open()) {
-      clock_gettime(CLOCK_REALTIME,&end);
-      myfile <<((end.tv_sec-start.tv_sec)); //seconds
-      myfile << setfill('0') << setw(3) << double(abs(end.tv_nsec)/1000000L); //milliseconds, format example 4300 means 4.3 seconds
-      myfile << "\t\t" << dd.id << "\t" << uc.x << "\t" << uc.y << "\t" << myR << endl; 
-    } //we'll close it when the time elapses
-#else
-		//linux version
-		if (myfile.is_open()) {
-			clock_gettime(CLOCK_REALTIME,&end);
-			myfile <<((end.tv_sec-start.tv_sec)); //seconds
-			myfile << setfill('0') << setw(3) << double(abs(end.tv_nsec)/1000000L); //milliseconds, format example 4300 means 4.3 seconds
-			myfile << "\t\t" << dd.id << "\t" << uc.x << "\t" << uc.y << "\t" << myR << endl; } //we'll close it when the time elapses
+		else if (!trialstart) { //trial has not started, check against robotID and known waypoints, update or add to list
+			if (dd.id != robotID) { //if it isn't the robot ID
+			    bool exists = 0;
+			    for (int a = 0; a < NUM_WAYPOINTS; a++) {
+				if (waypointIDs[a] == dd.id) {  //if it exists
+				    waypoints[a] = uc; //, overwrite the point
+				    exists = 1;
+				}
+			    }
+			    if (!exists && (waypointcount < NUM_WAYPOINTS) ) {
+				waypoints[waypointcount] = uc; //add it at position waypointcount
+				waypointIDs[waypointcount] = dd.id;
+				waypointcount++;
+				cout << "Found: " << dd.id << endl;
+				if (waypointcount >= NUM_WAYPOINTS) { waypointsfound = 1; } //set flag to indicate all waypoints have been found
+			    }
+			}
 		}
-#endif
-  }
+	}
 
-///operator//// Override
+/////// Override
 	void operator()(cv::Mat& frame) {
 		static helper::PerformanceMeasurer PM;
 		vector<TagDetection> detections;
@@ -547,6 +562,15 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		if(this->undistortImage) cv::undistort(orgFrame,frame,K,distCoeffs);
 		gDetector->process(frame, detections);
 		logld("[TagDetector] process time = "<<PM.toc()<<" sec.");
+
+		char buf [1024]; //way more than enough, but we're on a laptop, where 1kb of memory is not significant.
+		int n = read (tty_fd0, buf, sizeof buf);  // read up to 100 characters if ready to read
+		if (n>0) {
+		    for (int count = 0; count <=n ; count++ ){
+			cout << buf[count];
+			cout.flush();
+		    }
+		}
 
 		//visualization
 		int nValidDetections=0;
@@ -563,56 +587,6 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			helper::drawHomography(frame, Homo);
 			cv::circle(frame, cv::Point2d(dd.p[0][0],dd.p[0][1]), 3, helper::CV_GREEN, 2);
 		}
-		if (firsttimeflag) { clock_gettime(CLOCK_REALTIME,&start); } //until we write the first data point, we will keep resetting the start time
-	
-		clock_gettime(CLOCK_REALTIME,&check);
-		diff = (check.tv_sec - start.tv_sec)*1000 + double((check.tv_nsec - start.tv_nsec))/MILLION; //convert to seconds!!!
-		//cout << diff << " vs. " << timeval + STOPTIME << endl; //debug prints time
-		if( diff <= timeval + STOPTIME) { //compare to total write file time
-			//first compare to trialtime for move command
-			if ( diff <= timeval) {
-				if (firstmovecommand) {				
-					cout << "Sent move command." << endl;
-					string mycommand;
-					char left = 'L';
-					char right = 'R';
-					if (leftright == left) { mycommand = "a"; }
-					else if (leftright == right) { mycommand = "d";}
-					write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));
-					firstmovecommand = false;
-				}	
-			}
-			else { //we're over trialtime but under stoptime, we need to send stop command
-				if (firststopcommand) {				
-					cout << "Sent stop command." << endl;
-					string mycommand = " ";
-			    		write(tty_fd,mycommand.c_str(),strlen(mycommand.c_str()));
-					firststopcommand = false;
-				}
-			}	
-	
-		}
-		else{ //we're over write file time
-			cout << "iteration: " << iterationnum << ", trials total: " << trialnums << endl;
-			myfile.close();
-			firstmovecommand = true;
-			firststopcommand = true;
-	
-			if (iterationnum < trialnums) // we should run another trial
-			{
-				iterationnum++;
-				firsttimeflag = true; //reset flags
-				clock_gettime(CLOCK_REALTIME,&start); //reset time
-				string tempstring = filename + to_string(iterationnum)+".txt"; 
-				myfile.open(tempstring.c_str()); //open new file
-				myfile << "t\t\tID\tX\tY\tR\t" << endl;
-				cout << tempstring << endl;
-				cout << "Next iteration!" << endl;
-			
-			}
-			else
-			{  trialinit(); cout << "Run next type of trial." << endl; } //we should run the next trial		
-		}	
 
 		//logging results
 		if(nValidDetections>0 /*&& (doLog || (isPhoto && useEachValidPhoto) || (!isPhoto && doRecord))*/) {
@@ -620,68 +594,36 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			static int cnt=0;
 			std::string fileid = helper::num2str(cnt, 5);
 
-			//log images
-			//if(logVisFrame) cv::imwrite(outputDir+"/AprilTagFinder_frame_"+fileid+".png", frame);
-			//if(!isPhoto) cv::imwrite(outputDir+"/AprilTagFinder_orgframe_"+fileid+".png", orgFrame);
+    			//L.C: this is not supported by MacOSX and will caused build break!
+			clock_gettime(CLOCK_REALTIME,&check); //check the time
+			//throttle the frequency with which we send updates to the serial (via method writeData)
+			//by changing timeval to be the wait period desired between writes. Full speed isn't always a problem (depends on various factors)
+			diff = (check.tv_sec - start.tv_sec)*1000 + double((check.tv_nsec - start.tv_nsec))/MILLION; //convert to seconds!!!
 
-			//log detections
-			/*std::ofstream fs((outputDir+"/AprilTagFinder_log_"+fileid+".m").c_str());
-			fs<<"% AprilTagFinder log "<<cnt<<std::endl;
-			fs<<"% @ "<<LogHelper::getCurrentTimeString()<<std::endl;
-			fs<<"K="<<K<<";"<<std::endl;
-			fs<<"distCoeffs="<<distCoeffs<<";"<<std::endl;
-			fs<<"tags={};\n"<<std::endl;*/
-		
-			//THIS IS LOOP WHEREWE GO THROUGH ALL DETECTIONS
-			//cout << detections.size();
-			//std::string mydata = to_string(int(detections.size())) ;
-			//because we kept crashing, suspected spamming the port too fast, let's sloooow down with a sample rate limiting timer
-			//should we do something more clever, dynamically change the sampling rate? ...probably not.
-
-				for(int i=0,j=0; i<(int)detections.size(); ++i) {
-					TagDetection &dd = detections[i];
-					if(dd.hammingDistance>this->hammingThresh) continue;
-						++j;//note matlab uses 1-based index
-						writeData(dd, "tag", !this->undistortImage && !this->no_distortion);
-					}
-
-			//log optimization
-			/*std::ofstream os(
-					(outputDir + "/AprilTagFinder_opt_" + fileid + ".m").c_str());
-			os << "% AprilTagFinder optimization log " << cnt << std::endl;
-			os << "% @ " << LogHelper::getCurrentTimeString() << std::endl;
-			os << "K=" << K << ";" << std::endl;
-			os << "distCoeffs=" << distCoeffs << ";" << std::endl;
-			os << "% note U are distorted image points (raw image points)" << std::endl;
-			for (int i = 0; i < (int) markerSets.size(); ++i) {
-				cv::Mat Rwc, twc;
-				optimizeOn(detections, markerSets[i], Rwc, twc, os);
-			}
-			os.close();*/
-
+			for(int i=0,j=0; i<(int)detections.size(); ++i) {
+			    TagDetection &dd = detections[i];
+			    if(dd.hammingDistance>this->hammingThresh) continue;
+			    ++j;//note matlab uses 1-based index
+			    writeData(dd, "tag", !this->undistortImage && !this->no_distortion);
+			    }		
 			++cnt;
-		}//if doLog
-	}
+		    }
+		}
 
 	void handle(char key) {
 		switch (key) {
-		case 'd':
-			gDetector->segDecimate = !(gDetector->segDecimate);
-			logli("[ProcessVideo] gDetector.segDecimate="<<gDetector->segDecimate); break;
-		case 'l':
-			doLog=true; break;
-		case 'r':
-			doRecord=true; break;
-		case '1':
-			LogHelper::GLogControl::Instance().level = LogHelper::LOG_DEBUG; break;
-		case '2':
-			LogHelper::GLogControl::Instance().level = LogHelper::LOG_INFO; break;
-		case 'h':
-			cout<<"d: segDecimate\n"
-				"l: do log\n"
-				"r: do record\n"
-				"1: debug output\n"
-				"2: info output\n"<<endl; break;
+		case 'g': //Send a g command, for starting robots
+			pwmcommand = "\x67"; //send 'g'	
+			if ( write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str())) ==-1){ cout << "Serial write fail" << endl; }
+			else {
+			    if ( !waypointsfound ) { cout << "Not all waypoints have been identified yet." << endl; }
+			    else if (waypointsfound) {
+				cout << "Sent the start command, 'g', to the robot. Trial begins now." << endl;
+			   	trialstart = 1;
+			    }
+			}
+			break;
+
 		}
 	}
 
@@ -717,18 +659,29 @@ int main(const int argc, const char **argv )
 			return -1;
 		}
 	}
+
+	cout << "Enter robot ID:" << endl;
+	cin >> robotID;
+	cout << endl;	
+
+	#ifdef __MACH__
+	tty_fd0 = open (DEVICE0, O_CREAT|O_WRONLY, 0777);
+	#else
+	tty_fd0 = open (DEVICE0, O_RDWR | O_NOCTTY | O_SYNC );
+	#endif
 	
-	tcgetattr(STDOUT_FILENO, &old_stdio);//save current port settings
-	bzero(&tio, sizeof(tio));
-	tio.c_iflag = 0;
-	tio.c_iflag = IGNPAR | IGNBRK | IXOFF;
-	tio.c_oflag = 0;
-	tio.c_cflag = CS8 | CREAD | CLOCAL;
-	tio.c_lflag = ICANON;
-	tty_fd = open(DEVICE, O_RDWR | O_NOCTTY);
-	cfsetospeed(&tio, SPEED);
-	tcsetattr(tty_fd, TCSANOW, &tio);
-	
+	printf("\nOpen Device %s\n", DEVICE0);
+	fcntl(tty_fd0, F_SETFL, FNDELAY); //necessary for immediate return on read functions
+	//fcntl(tty_fd0, F_SETFL); //necessary for immediate return on read functions
+	if (tty_fd0 < 0) {
+            printf ("error %d opening %s: %s\n", errno, DEVICE0, strerror (errno));
+	}
+	set_interface_attribs (tty_fd0, SPEED, 0);  // set speed, 8n1 (no parity)
+	set_blocking (tty_fd0, 0);                // set no blocking
+
+	clock_gettime(CLOCK_REALTIME,&start); //initialize clock
+	timeval=75;
+
 	ConfigHelper::Config& cfg = GConfig::Instance();
 	if(!cfg.autoLoad("AprilTagFinder.cfg",DirHelper::getFileDir(argv[0]))) {
 		logli("[main] no AprilTagFinder.cfg file loaded");
@@ -765,9 +718,10 @@ int main(const int argc, const char **argv )
 	processor.isPhoto = is->isClass<helper::ImageSource_Photo>();
 	processor.outputDir = cfg.get("outputDir", is->getSourceDir());
 	logli("[main] detection will be logged to outputDir="<<processor.outputDir);
-	
-	trialsfile.open("trials.txt");
-	trialinit();
+
+	myfile.open("trialoutput.txt");
+	if (!myfile) { cout << "Failure to open output file." << endl; exit(1);}
+	myfile << "t\t\tID\tX\tY\tR\t" << endl;
 
 	is->run(processor,-1, false,
 		cfg.get<bool>("ImageSource:pause", is->getPause()),

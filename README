@@ -24,6 +24,9 @@ for installation instructions (MOARbots help guide)
 3. Usage
 	AprilTagFinder camera://0
 
+NOTE: Since auto-adding subdirectories wasn't working for Mac and is now disabled,
+you need to manually add them to the CMakeLists.txt at the end, for any new apps
+you add in the applications directory.
 
 #===========================================
 # FOR MacOSX User:

@@ -70,9 +70,10 @@ include(${CMAKE_SOURCE_DIR}/cmake/AutoAddSubDir.cmake)
 ########### Subdirectories ###############
 #L.C.: audo add subdirectory is not supported crossplatform (ex:OSX)
 #  so manually add each project here.
-#  note: the StreamData project is still build break due to get time funciton.
+#  note: the StreamData project is still build break due to get time function.
 ADD_SUBDIRECTORY(application/AprilCalib)
 ADD_SUBDIRECTORY(application/AprilTagFinder)
 ADD_SUBDIRECTORY(application/AprilTagCreator)
 ADD_SUBDIRECTORY(application/StreamData)
 ADD_SUBDIRECTORY(application/RotationLog)
+ADD_SUBDIRECTORY(application/Competition1)
