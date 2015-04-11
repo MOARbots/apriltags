@@ -80,12 +80,20 @@
 //Device 1 is for debug only
 #define SPEED B9600
 #define MILLION 1000000L
+#define BILLION 1000000000L
+#define SERIAL_REPORT_INTERVAL 75
+#define COUT_REPORT_INTERVAL 500
+#define MYFILE_REPORT_INTERVAL 75
+#define PRECISION 6
 
 //Because AprilTags is computed tags near the border as centered at negative coords
 #define OFFSET 25
 
 #define NUM_WAYPOINTS 5
 #define VISIT_RADIUS 50
+#define INIT_SCORE 30
+#define PTS_PER_WYPT 25
+//Score = INIT_SCORE - t + PTS_PER_WYPT*n, t is time in seconds, n number of unique waypoints reached by robot
 
 using namespace std;
 using namespace cv;
@@ -106,7 +114,6 @@ cv::Ptr<TagDetector> gDetector;
 	//clock_gettime is not implemented on OSX
 	#define CLOCK_REALTIME 0
 	int clock_gettime(int /*clk_id*/, struct timespec* t) {
-  		struct timeval now;
   		int rv = gettimeofday(&now, NULL);
   		if (rv) return rv;
   		t->tv_sec  = now.tv_sec;
@@ -127,8 +134,14 @@ cv::Point2d waypoints[NUM_WAYPOINTS]; //stores the X,Y coords of waypoints
 bool waypointIDsfound[NUM_WAYPOINTS] = {0}; //indicates whether each waypoint was reached by robot
 
 //clock constants
-struct timespec start, check, end;
-uint32_t diff, timeval;
+struct timespec start1, start2, start3, check, globalstart;
+/*
+start: indicates the last time we sent data over serial
+check: check the current time to compare against the start or globalstart
+globalstart: indicates when the trial started
+*/
+
+uint32_t diff;
 
 //serial stuff
 struct termios tio;
@@ -473,8 +486,11 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		myR = myR * (180.00/M_PI);
 		myR = 360-myR;
 
-		if( diff >= timeval) { //this section throttled by limiting execution to every timeval interval
-		    	clock_gettime(CLOCK_REALTIME,&start); //reset start time	
+		clock_gettime(CLOCK_REALTIME,&check); //check the time
+		diff = (check.tv_sec - start1.tv_sec)*1000 + double((check.tv_nsec - start1.tv_nsec))/MILLION; //convert to seconds!!!
+
+		if( diff >= SERIAL_REPORT_INTERVAL) { //this section throttled by limiting execution to every serial report interval
+		    	clock_gettime(CLOCK_REALTIME,&start1); //reset start time	
 
 			/*	We construct the message according to the format
 			*	111111		6 bit header, pads out total message size to a round number of bytes
@@ -514,41 +530,56 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 				send_write_error_msg = 1;
 			    }
 			}
-		} //end of timeval throttled section
+		} //end of serial report interval throttled section
 
 		if (trialstart) { //if the trial is underway, write to the output file
-			#ifndef __MACH__
-    			if (myfile.is_open()) {
-      			    clock_gettime(CLOCK_REALTIME,&end);
-     		 	    myfile <<((end.tv_sec-start.tv_sec)); //seconds
-  			    myfile << setfill('0') << setw(3) << double(abs(end.tv_nsec)/1000000L); //milliseconds, format example 4300 means 4.3 seconds
-      			    myfile << "\t\t" << dd.id << "\t" << uc.x << "\t" << uc.y << "\t" << myR << endl; 
-    			} //we'll close it when the time elapses
-			#else
-			//default linux version
-			if (myfile.is_open()) {
-			    clock_gettime(CLOCK_REALTIME,&end);
-			    myfile <<((end.tv_sec-start.tv_sec)); //seconds
-			    myfile << setfill('0') << setw(3) << double(abs(end.tv_nsec)/1000000L); //milliseconds, format example 4300 means 4.3 seconds
-			    myfile << "\t\t" << dd.id << "\t" << uc.x << "\t" << uc.y << "\t" << myR << endl; } //we'll close it when the time elapses
-			}
-			#endif
-
-			if (dd.id == robotID && trialstart) { //during the trial check to see if robot was at a waypoint
+			if (dd.id == robotID) { //check to see if robot was at a waypoint
 			    for (int a = 0; a < NUM_WAYPOINTS; a++) { //check against all known points
 				if ( (abs(waypoints[a].x-uc.x) <= VISIT_RADIUS ) && (abs(waypoints[a].y-uc.y) <= VISIT_RADIUS ) ) {
 				    if (!waypointIDsfound[a]) {
 					waypointIDsfound[a] = 1;
 				    	cout << "Robot reached waypoint " << waypointIDs[a] << endl;
+					if (myfile.is_open()) { myfile << "*Robot reached waypoint " << waypointIDs[a] << endl; }
 					waypointcount++;
 					if (waypointcount >=5) { //all waypoints have been reached
 					    cout << "Robot reached all waypoints; ending trial." << endl;
-					    trialend = 1; //might not be needed?
-					    myfile.close();
+      			    		    clock_gettime(CLOCK_REALTIME,&check);
+			    		    float timeelapsed = float(check.tv_sec - globalstart.tv_sec)+ float(double((check.tv_nsec - globalstart.tv_nsec))/BILLION);
+			    		    float score = INIT_SCORE - timeelapsed + (PTS_PER_WYPT)*waypointcount;
+					    if (myfile.is_open()) { myfile << "*Robot reached all waypoints. Final score: " << score << endl; myfile.close(); }
 					    exit(0);
 					}
 				    }
 				}
+			    }
+			    //print the robot location and the score
+      			    clock_gettime(CLOCK_REALTIME,&check);
+			    float timeelapsed = float(check.tv_sec - globalstart.tv_sec)+ float(double((check.tv_nsec - globalstart.tv_nsec))/BILLION);
+			    float score = INIT_SCORE - timeelapsed + (PTS_PER_WYPT)*waypointcount;
+			    if (score <= 0) {
+				cout << "Score has dropped to zero. Trial ending." << endl;
+				if (myfile.is_open()){
+				    myfile << "*Score reached zero." << endl;
+				    myfile.close();
+				}
+				exit(0);
+			    }
+
+			    clock_gettime(CLOCK_REALTIME,&check); //check the time
+			    diff = (check.tv_sec - start2.tv_sec)*1000 + double((check.tv_nsec - start2.tv_nsec))/MILLION; //convert to seconds!!!
+			    if( diff >= MYFILE_REPORT_INTERVAL) { //this section throttled by limiting execution to every myfile report interval
+		    		clock_gettime(CLOCK_REALTIME,&start2); //reset start time	
+				if (myfile.is_open()) {
+				    myfile << fixed;
+				    myfile << setprecision(PRECISION) << timeelapsed;
+				    myfile << "\t\t" << uc.x << "\t\t" << uc.y << "\t\t" << myR << "\t\t" << score << endl;
+				}
+			    }
+
+			    diff = (check.tv_sec - start3.tv_sec)*1000 + double((check.tv_nsec - start3.tv_nsec))/MILLION; //convert to seconds!!!
+			    if( diff >= COUT_REPORT_INTERVAL) { //this section throttled by limiting execution to every cout report interval
+			        clock_gettime(CLOCK_REALTIME,&start3); //reset start time
+				cout << "Score: " << score << endl;
 			    }
 			}
 		}
@@ -566,7 +597,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 				waypoints[waypointcount] = uc; //add it at position waypointcount
 				waypointIDs[waypointcount] = dd.id;
 				waypointcount++;
-				cout << "Camera identified wayoint " << dd.id << endl;
+				cout << "Camera identified waypoint " << dd.id << endl;
 				if (waypointcount >= NUM_WAYPOINTS) { waypointsfound = 1; } //set flag to indicate all waypoints have been found
 			    }
 			}
@@ -615,12 +646,6 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			static int cnt=0;
 			std::string fileid = helper::num2str(cnt, 5);
 
-    			//L.C: this is not supported by MacOSX and will caused build break!
-			clock_gettime(CLOCK_REALTIME,&check); //check the time
-			//throttle the frequency with which we send updates to the serial (via method writeData)
-			//by changing timeval to be the wait period desired between writes. Full speed isn't always a problem (depends on various factors)
-			diff = (check.tv_sec - start.tv_sec)*1000 + double((check.tv_nsec - start.tv_nsec))/MILLION; //convert to seconds!!!
-
 			for(int i=0,j=0; i<(int)detections.size(); ++i) {
 			    TagDetection &dd = detections[i];
 			    if(dd.hammingDistance>this->hammingThresh) continue;
@@ -634,6 +659,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 	void handle(char key) {
 		switch (key) {
 		case 'g': //Send a g command, for starting robots
+		    if (!trialstart) {
 			pwmcommand = "\x67"; //send 'g'	
 			if ( write(tty_fd0,pwmcommand.c_str(),strlen(pwmcommand.c_str())) ==-1){ cout << "Serial write fail" << endl; }
 			else {
@@ -642,8 +668,23 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 				cout << "Sent the start command, 'g', to the robot. Trial begins now." << endl;
 			   	trialstart = 1;
 				waypointcount = 0;
+				if (myfile.is_open()) {
+				    myfile <<"Robot ID: " << robotID << endl;
+				    myfile << "Waypoints: " << NUM_WAYPOINTS << endl;
+				    myfile <<"ID\tX\t\tY" << endl;
+				    for (int c=0; c < NUM_WAYPOINTS; c++) {
+					myfile << waypointIDs[c] << "\t";
+					myfile << waypoints[c].x << "\t\t";
+					myfile << waypoints[c].y << endl;
+				    }
+				    myfile << "*Begin trial." << endl;
+				    myfile << "time\t\t\tX\t\tY\t\tR\t\tscore" << endl;
+				}
+				clock_gettime(CLOCK_REALTIME,&globalstart); //initialize clock for reporting trial time
 			    }
 			}
+		    }
+		    else {cout << "Trial has already started!" << endl; }
 			break;
 
 		}
@@ -701,8 +742,10 @@ int main(const int argc, const char **argv )
 	set_interface_attribs (tty_fd0, SPEED, 0);  // set speed, 8n1 (no parity)
 	set_blocking (tty_fd0, 0);                // set no blocking
 
-	clock_gettime(CLOCK_REALTIME,&start); //initialize clock
-	timeval=75;
+	clock_gettime(CLOCK_REALTIME,&start1); //initialize clock for throttling serial comms
+	clock_gettime(CLOCK_REALTIME,&start2); //initialize clock for throttling myfile writes
+	clock_gettime(CLOCK_REALTIME,&start3); //initialize clock for throttling cout printouts
+
 
 	ConfigHelper::Config& cfg = GConfig::Instance();
 	if(!cfg.autoLoad("AprilTagFinder.cfg",DirHelper::getFileDir(argv[0]))) {
@@ -736,14 +779,13 @@ int main(const int argc, const char **argv )
 		return -1;
 	}
 
-	AprilTagprocessor processor;
+	AprilTagprocessor processor;	
 	processor.isPhoto = is->isClass<helper::ImageSource_Photo>();
 	processor.outputDir = cfg.get("outputDir", is->getSourceDir());
 	logli("[main] detection will be logged to outputDir="<<processor.outputDir);
 
 	myfile.open("trialoutput.txt");
 	if (!myfile) { cout << "Failure to open output file." << endl; exit(1);}
-	myfile << "t\t\tID\tX\tY\tR\t" << endl;
 
 	is->run(processor,-1, false,
 		cfg.get<bool>("ImageSource:pause", is->getPause()),
