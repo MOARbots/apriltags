@@ -82,7 +82,7 @@
 #define MILLION 1000000L
 #define BILLION 1000000000L
 #define SERIAL_REPORT_INTERVAL 75
-#define COUT_REPORT_INTERVAL 500
+#define COUT_REPORT_INTERVAL 1000
 #define MYFILE_REPORT_INTERVAL 75
 #define PRECISION 6
 
@@ -90,7 +90,7 @@
 #define OFFSET 25
 
 #define NUM_WAYPOINTS 5
-#define VISIT_RADIUS 50
+#define VISIT_RADIUS 25
 #define INIT_SCORE 30
 #define PTS_PER_WYPT 25
 //Score = INIT_SCORE - t + PTS_PER_WYPT*n, t is time in seconds, n number of unique waypoints reached by robot
@@ -141,7 +141,7 @@ check: check the current time to compare against the start or globalstart
 globalstart: indicates when the trial started
 */
 
-uint32_t diff;
+uint32_t diff1, diff2, diff3;
 
 //serial stuff
 struct termios tio;
@@ -149,6 +149,10 @@ struct termios stdio;
 struct termios old_stdio;
 int tty_fd0, tty_fd1;
 bool send_write_error_msg = 1;
+
+bool serial_write_now = 1;
+bool myfile_write_now = 1;
+bool cout_write_now = 1;
 
 int set_interface_attribs (int fd, int speed, int parity)
 {
@@ -464,6 +468,8 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 
 		uc.y = uc.y+OFFSET;
 		uc.x = uc.x+OFFSET;
+		up[0].x = up[0].x+OFFSET;
+		up[0].y = up[0].y+OFFSET;
 		//Using uc.x, uc.y, the central coordinates, and up[0].x, up[0].y, one of the corner coordinates, we now compute the rotation 
 		float myX = up[0].x - uc.x;
 		float myY = up[0].y - uc.y;
@@ -486,11 +492,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		myR = myR * (180.00/M_PI);
 		myR = 360-myR;
 
-		clock_gettime(CLOCK_REALTIME,&check); //check the time
-		diff = (check.tv_sec - start1.tv_sec)*1000 + double((check.tv_nsec - start1.tv_nsec))/MILLION; //convert to seconds!!!
-
-		if( diff >= SERIAL_REPORT_INTERVAL) { //this section throttled by limiting execution to every serial report interval
-		    	clock_gettime(CLOCK_REALTIME,&start1); //reset start time	
+		if (serial_write_now) {
 
 			/*	We construct the message according to the format
 			*	111111		6 bit header, pads out total message size to a round number of bytes
@@ -539,14 +541,13 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 				    if (!waypointIDsfound[a]) {
 					waypointIDsfound[a] = 1;
 				    	cout << "Robot reached waypoint " << waypointIDs[a] << endl;
-					if (myfile.is_open()) { myfile << "*Robot reached waypoint " << waypointIDs[a] << endl; }
+					if (myfile.is_open()) { myfile << "* Reached waypoint " << waypointIDs[a] << endl; }
 					waypointcount++;
 					if (waypointcount >=5) { //all waypoints have been reached
 					    cout << "Robot reached all waypoints; ending trial." << endl;
-      			    		    clock_gettime(CLOCK_REALTIME,&check);
 			    		    float timeelapsed = float(check.tv_sec - globalstart.tv_sec)+ float(double((check.tv_nsec - globalstart.tv_nsec))/BILLION);
 			    		    float score = INIT_SCORE - timeelapsed + (PTS_PER_WYPT)*waypointcount;
-					    if (myfile.is_open()) { myfile << "*Robot reached all waypoints. Final score: " << score << endl; myfile.close(); }
+					    if (myfile.is_open()) { myfile << "* End all found" << endl << "& " << score << endl; myfile.close(); }
 					    exit(0);
 					}
 				    }
@@ -559,26 +560,22 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			    if (score <= 0) {
 				cout << "Score has dropped to zero. Trial ending." << endl;
 				if (myfile.is_open()){
-				    myfile << "*Score reached zero." << endl;
+				    myfile << "* End zero score" << endl;
 				    myfile.close();
 				}
 				exit(0);
 			    }
 
-			    clock_gettime(CLOCK_REALTIME,&check); //check the time
-			    diff = (check.tv_sec - start2.tv_sec)*1000 + double((check.tv_nsec - start2.tv_nsec))/MILLION; //convert to seconds!!!
-			    if( diff >= MYFILE_REPORT_INTERVAL) { //this section throttled by limiting execution to every myfile report interval
-		    		clock_gettime(CLOCK_REALTIME,&start2); //reset start time	
+			    if( myfile_write_now ) { //this section throttled by limiting execution to every myfile report interval
 				if (myfile.is_open()) {
+				    myfile << "> ";
 				    myfile << fixed;
 				    myfile << setprecision(PRECISION) << timeelapsed;
-				    myfile << "\t\t" << uc.x << "\t\t" << uc.y << "\t\t" << myR << "\t\t" << score << endl;
+				    myfile << " " << uc.x << " " << uc.y << " " << myR << " " << score << endl;
 				}
 			    }
 
-			    diff = (check.tv_sec - start3.tv_sec)*1000 + double((check.tv_nsec - start3.tv_nsec))/MILLION; //convert to seconds!!!
-			    if( diff >= COUT_REPORT_INTERVAL) { //this section throttled by limiting execution to every cout report interval
-			        clock_gettime(CLOCK_REALTIME,&start3); //reset start time
+			    if( cout_write_now ) { //this section throttled by limiting execution to every cout report interval
 				cout << "Score: " << score << endl;
 			    }
 			}
@@ -646,6 +643,17 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			static int cnt=0;
 			std::string fileid = helper::num2str(cnt, 5);
 
+			clock_gettime(CLOCK_REALTIME,&check); //keep track of the time
+			diff1 = (check.tv_sec - start1.tv_sec)*1000 + double((check.tv_nsec - start1.tv_nsec))/MILLION;
+			diff2 = (check.tv_sec - start2.tv_sec)*1000 + double((check.tv_nsec - start2.tv_nsec))/MILLION;
+			diff3 = (check.tv_sec - start3.tv_sec)*1000 + double((check.tv_nsec - start3.tv_nsec))/MILLION;
+			if( diff1 >= SERIAL_REPORT_INTERVAL) { serial_write_now = 1; clock_gettime(CLOCK_REALTIME,&start1); }
+			else { serial_write_now = 0; }
+			if ( diff2 >= MYFILE_REPORT_INTERVAL) { myfile_write_now = 1; clock_gettime(CLOCK_REALTIME,&start2); }
+			else { myfile_write_now = 0; }
+			if ( diff3 >= COUT_REPORT_INTERVAL) { cout_write_now = 1; clock_gettime(CLOCK_REALTIME,&start3); }
+			else { cout_write_now = 0; }
+
 			for(int i=0,j=0; i<(int)detections.size(); ++i) {
 			    TagDetection &dd = detections[i];
 			    if(dd.hammingDistance>this->hammingThresh) continue;
@@ -669,16 +677,17 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 			   	trialstart = 1;
 				waypointcount = 0;
 				if (myfile.is_open()) {
-				    myfile <<"Robot ID: " << robotID << endl;
-				    myfile << "Waypoints: " << NUM_WAYPOINTS << endl;
-				    myfile <<"ID\tX\t\tY" << endl;
+				    myfile <<"# Robot ID: " << robotID << endl;
+				    myfile << "# Waypoints: " << NUM_WAYPOINTS << endl;
+				    myfile <<"# ID X Y" << endl;
 				    for (int c=0; c < NUM_WAYPOINTS; c++) {
-					myfile << waypointIDs[c] << "\t";
-					myfile << waypoints[c].x << "\t\t";
+					myfile << "@ ";
+					myfile << waypointIDs[c] << " ";
+					myfile << waypoints[c].x << " ";
 					myfile << waypoints[c].y << endl;
 				    }
-				    myfile << "*Begin trial." << endl;
-				    myfile << "time\t\t\tX\t\tY\t\tR\t\tscore" << endl;
+				    myfile << "* Beginning of trial" << endl;
+				    myfile << "# time X Y R score" << endl;
 				}
 				clock_gettime(CLOCK_REALTIME,&globalstart); //initialize clock for reporting trial time
 			    }
