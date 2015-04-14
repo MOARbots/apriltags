@@ -90,8 +90,8 @@
 #define OFFSET 25
 
 #define NUM_WAYPOINTS 5
-#define VISIT_RADIUS 25
-#define INIT_SCORE 30
+#define VISIT_RADIUS 20
+#define INIT_SCORE 120
 #define PTS_PER_WYPT 25
 //Score = INIT_SCORE - t + PTS_PER_WYPT*n, t is time in seconds, n number of unique waypoints reached by robot
 
@@ -537,7 +537,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		if (trialstart) { //if the trial is underway, write to the output file
 			if (dd.id == robotID) { //check to see if robot was at a waypoint
 			    for (int a = 0; a < NUM_WAYPOINTS; a++) { //check against all known points
-				if ( (abs(waypoints[a].x-uc.x) <= VISIT_RADIUS ) && (abs(waypoints[a].y-uc.y) <= VISIT_RADIUS ) ) {
+				if ( sqrt(pow((waypoints[a].x-uc.x)+(waypoints[a].y-uc.y),2)) ) {
 				    if (!waypointIDsfound[a]) {
 					waypointIDsfound[a] = 1;
 				    	cout << "Robot reached waypoint " << waypointIDs[a] << endl;
