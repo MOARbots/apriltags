@@ -537,7 +537,7 @@ struct AprilTagprocessor : public ImageHelper::ImageSource::Processor {
 		if (trialstart) { //if the trial is underway, write to the output file
 			if (dd.id == robotID) { //check to see if robot was at a waypoint
 			    for (int a = 0; a < NUM_WAYPOINTS; a++) { //check against all known points
-				if ( sqrt(pow((waypoints[a].x-uc.x)+(waypoints[a].y-uc.y),2)) <= VISIT_RADIUS) {
+				if ( sqrt(pow((waypoints[a].x-uc.x),2)+pow((waypoints[a].y-uc.y),2)) <= VISIT_RADIUS) {
 				    if (!waypointIDsfound[a]) {
 					waypointIDsfound[a] = 1;
 				    	cout << "Robot reached waypoint " << waypointIDs[a] << endl;
